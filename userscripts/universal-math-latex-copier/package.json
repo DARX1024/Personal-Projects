@@ -1,0 +1,11 @@
+{
+  "name": "universal-math-latex-copier",
+  "private": true,
+  "description": "Tampermonkey userscript tests (Node 22+)",
+  "scripts": {
+    "test": "node --check universal-math-latex-copier.user.js && node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

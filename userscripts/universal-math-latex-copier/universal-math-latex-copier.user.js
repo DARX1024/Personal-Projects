@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Universal Math LaTeX Copier
 // @namespace    https://github.com/DARX1024/Personal-Scripts
-// @version      2.2.0
+// @version      2.3.0
 // @description  在大多数网站上双击公式复制 LaTeX；普通双击复制为 Markdown 数学格式，Shift+双击复制纯 LaTeX
 // @author       DARX1024
 // @match        *://*/*
 // @grant        GM_addStyle
 // @grant        GM_setClipboard
+// @grant        unsafeWindow
 // @run-at       document-end
 // @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
 // @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
@@ -14,6 +15,8 @@
 
 (function () {
     'use strict';
+
+    const VERSION = '2.3.0';
 
     // 统一配置项，后续需要改交互或样式时，优先从这里调整。
     const CONFIG = {
@@ -24,7 +27,12 @@
         debug: false,
         maxTextMathContainerLength: 4000,
     };
-    const COPY_HINT_TITLE = '双击复制 LaTeX；Shift+双击复制纯 LaTeX';
+
+    // 声明了 @grant 后脚本运行在沙箱里，页面上的 MathJax 等全局变量只能经 unsafeWindow 读取。
+    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+    // 这些区域里的双击是正常选词 / 编辑，正文定界符兜底不能接管。
+    const EDITABLE_OR_CODE_SELECTOR = 'pre, code, textarea, input, [contenteditable]:not([contenteditable="false"])';
 
     const DELIMITED_MATH_SOURCE = String.raw`\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$\$[\s\S]+?\$\$|\$(?!\$)(?:\\.|[^$\\\n])+\$`;
     const DELIMITED_MATH_REGEX = new RegExp(DELIMITED_MATH_SOURCE);
@@ -171,9 +179,10 @@
         ];
 
         if (includeAccessibleText) {
+            // aria-label / title 常是朗读文本或普通提示，只有带明显 LaTeX 特征时才采用。
             values.push(
-                root.getAttribute('aria-label'),
-                root.getAttribute('title') === COPY_HINT_TITLE ? '' : root.getAttribute('title')
+                ...[root.getAttribute('aria-label'), root.getAttribute('title')]
+                    .filter(value => looksLikeLatex(value))
             );
         }
 
@@ -203,10 +212,30 @@
         return clean;
     }
 
+    // 返回 text[0] 处的 `{` 对应的 `}` 位置，跳过 `\{` `\}` 转义；不配对时返回 -1。
+    function matchingBraceIndex(text) {
+        let depth = 0;
+        for (let i = 0; i < text.length; i += 1) {
+            const char = text[i];
+            if (char === '\\') {
+                i += 1;
+            } else if (char === '{') {
+                depth += 1;
+            } else if (char === '}') {
+                depth -= 1;
+                if (depth === 0) return i;
+            }
+        }
+        return -1;
+    }
+
     function stripWikipediaPresentationWrapper(text) {
         const clean = normalizeLatex(text);
         const match = clean.match(/^\{\\(?:displaystyle|textstyle|scriptstyle|scriptscriptstyle)\s+([\s\S]+)\}$/);
-        return match ? match[1].trim() : clean;
+
+        // 只有外层 `{` 一直包到结尾时才是包装，避免把 `{\displaystyle a}+{b}` 剥成不配对的 `a}+{b`。
+        if (!match || matchingBraceIndex(clean) !== clean.length - 1) return clean;
+        return match[1].trim();
     }
 
     function findClosestMatchInChain(root, predicate, maxDepth = 6) {
@@ -222,31 +251,27 @@
         return null;
     }
 
+    function isMathScript(node) {
+        return node?.tagName === 'SCRIPT' && /^math\/tex/i.test(node.type);
+    }
+
     function findNearbyMathScript(root, maxDepth = 6) {
         const start = findClosestMatchInChain(root, node => node instanceof Element, maxDepth);
+        if (!start) return null;
+
+        // 只在起点自身内部找后代 script；祖先的后代里可能是同段落的其他公式。
+        const descendant = start.querySelector?.('script[type^="math/tex"]');
+        if (descendant) return descendant;
+
         let current = start;
         let depth = 0;
 
         while (current && depth <= maxDepth) {
-            if (current.matches?.('script[type^="math/tex"]')) {
-                return current;
-            }
+            if (isMathScript(current)) return current;
 
-            const descendant = current.querySelector?.('script[type^="math/tex"]');
-            if (descendant) return descendant;
-
-            const siblingCandidates = [
-                current.previousElementSibling,
-                current.nextElementSibling
-            ].filter(Boolean);
-
-            for (const sibling of siblingCandidates) {
-                if (sibling.matches?.('script[type^="math/tex"]')) {
-                    return sibling;
-                }
-
-                const siblingDescendant = sibling.querySelector?.('script[type^="math/tex"]');
-                if (siblingDescendant) return siblingDescendant;
+            // MathJax 2 的 script 紧跟在渲染容器（或 MathJax_Display 外层）后面。
+            for (const sibling of [current.nextElementSibling, current.previousElementSibling]) {
+                if (isMathScript(sibling)) return sibling;
             }
 
             current = current.parentElement;
@@ -258,34 +283,17 @@
 
     function getMathJaxSourceScript(root) {
         if (!root) return null;
+        if (isMathScript(root)) return root;
 
-        if (root.tagName === 'SCRIPT' && /^math\/tex/i.test(root.type)) {
-            return root;
+        // MathJax 2 渲染容器 id 为 `MathJax-Element-N-Frame`，原始 script 的 id 去掉 `-Frame`。
+        // 用 closest 直接找到外层容器，公式嵌套再深也不受遍历层数限制。
+        const frame = root.closest?.('[id^="MathJax-Element-"][id$="-Frame"]');
+        if (frame) {
+            const source = document.getElementById(frame.id.slice(0, -6));
+            if (isMathScript(source)) return source;
         }
 
-        const nearbyScript = findNearbyMathScript(root);
-
-        if (nearbyScript) return nearbyScript;
-
-        const idCarrier = root.closest?.('[id$="-Frame"], [id^="MathJax-Element-"], [id^="MathJax-Span-"]') || root;
-        const id = idCarrier.id || '';
-
-        // MathJax 2 常见模式是：渲染后的容器 id 以 `-Frame` 结尾，原始 script 用去掉 `-Frame` 的 id。
-        if (id.endsWith('-Frame')) {
-            const source = document.getElementById(id.slice(0, -6));
-            if (source?.tagName === 'SCRIPT' && /^math\/tex/i.test(source.type)) {
-                return source;
-            }
-        }
-
-        if (id && /^MathJax-(?:Element|Span)-/.test(id)) {
-            const source = document.getElementById(id);
-            if (source?.tagName === 'SCRIPT' && /^math\/tex/i.test(source.type)) {
-                return source;
-            }
-        }
-
-        return null;
+        return findNearbyMathScript(root);
     }
 
     function getMathJaxOriginalText(root) {
@@ -294,24 +302,12 @@
             return sourceScript.textContent;
         }
 
-        const mathJax = window.MathJax;
+        const mathJax = pageWindow.MathJax;
 
         // MathJax 2 的 element jax 上直接带 originalText。
-        if (mathJax?.Hub?.getJaxFor) {
-            const frameLikeRoot = findClosestMatchInChain(
-                root,
-                node => node?.id && /(?:-Frame$|^MathJax-(?:Element|Span)-)/.test(node.id)
-            );
-            const candidates = [
-                sourceScript,
-                sourceScript?.id,
-                root,
-                root?.id,
-                frameLikeRoot,
-                frameLikeRoot?.id,
-                root?.previousElementSibling,
-                root?.nextElementSibling
-            ].filter(Boolean);
+        if (mathJax?.Hub?.getJaxFor && root) {
+            const frame = root.closest?.('[id^="MathJax-Element-"][id$="-Frame"]');
+            const candidates = [frame, root].filter(Boolean);
 
             for (const candidate of candidates) {
                 try {
@@ -323,24 +319,25 @@
                     log('MathJax getJaxFor failed', error);
                 }
             }
-
-            if (root) {
-                try {
-                    const allJax = mathJax.Hub.getAllJax(root);
-                    const fromAll = allJax?.find?.(jax => jax?.originalText?.trim());
-                    if (fromAll?.originalText) {
-                        return fromAll.originalText;
-                    }
-                } catch (error) {
-                    log('MathJax getAllJax failed', error);
-                }
-            }
         }
 
-        // MathJax 3/4 的 math item 结构与 v2 不同，这里做一个轻量兼容。
-        if (mathJax?.startup?.document?.getMathItemsWithin && root) {
+        // MathJax 3/4：math item 的 typesetRoot 就是页面上的 mjx-container。
+        const mathDocument = mathJax?.startup?.document;
+        if (mathDocument && root) {
+            const container = root.closest?.('mjx-container') || root;
+
             try {
-                const items = mathJax.startup.document.getMathItemsWithin(root);
+                for (const item of mathDocument.math || []) {
+                    if (item?.typesetRoot === container && typeof item.math === 'string' && item.math.trim()) {
+                        return item.math;
+                    }
+                }
+            } catch (error) {
+                log('MathJax math list failed', error);
+            }
+
+            try {
+                const items = mathDocument.getMathItemsWithin?.(container);
                 const item = items?.find?.(entry => typeof entry?.math === 'string' && entry.math.trim());
                 if (item?.math) {
                     return item.math;
@@ -393,22 +390,19 @@
     }
 
     function findNearestTextMathContainer(target) {
+        if (target.closest(EDITABLE_OR_CODE_SELECTOR)) return null;
+
         let current = target;
 
         while (current && current !== document.body) {
-            if (
-                !current.closest('.katex, .katex-display, mjx-container, .MathJax, .MathJax_Display, math, .math-holder, .ztext-math, .mwe-math-element') &&
-                !/^(SCRIPT|STYLE|TEXTAREA|INPUT|PRE|CODE|SVG|CANVAS)$/i.test(current.tagName)
-            ) {
-                const text = current.textContent || '';
-                if (
-                    text.length > 0 &&
-                    text.length <= CONFIG.maxTextMathContainerLength &&
-                    DELIMITED_MATH_REGEX.test(text)
-                ) {
-                    return current;
-                }
-            }
+            if (/^(SCRIPT|STYLE|SVG|CANVAS)$/i.test(current.tagName)) return null;
+            if (current.closest('.katex, .katex-display, mjx-container, .MathJax, .MathJax_Display, math, .math-holder, .ztext-math, .mwe-math-element')) return null;
+
+            const text = current.textContent || '';
+
+            // 祖先的文本只会更长，超过上限后不必再往上算。
+            if (text.length > CONFIG.maxTextMathContainerLength) return null;
+            if (DELIMITED_MATH_REGEX.test(text)) return current;
 
             current = current.parentElement;
         }
@@ -416,7 +410,9 @@
         return null;
     }
 
-    function extractDelimitedMath(text, cursorOffset) {
+    // 只返回光标所在的那个公式；allowSingleFallback 时，若文本里恰好只有一个公式，
+    // 光标不在公式上也返回它（用于本身就是公式容器的节点）。
+    function extractDelimitedMath(text, cursorOffset, allowSingleFallback = false) {
         if (!text) return null;
 
         const matches = [];
@@ -436,38 +432,27 @@
             });
         }
 
-        if (!matches.length) return null;
+        const toResult = match => ({ latex: match.latex, display: match.display });
 
         if (typeof cursorOffset === 'number' && cursorOffset >= 0) {
             const containing = matches.find(match => cursorOffset >= match.start && cursorOffset <= match.end);
-            if (containing) {
-                return {
-                    latex: containing.latex,
-                    display: containing.display
-                };
-            }
-
-            const nearest = matches.reduce((best, match) => {
-                const distance = cursorOffset < match.start
-                    ? match.start - cursorOffset
-                    : cursorOffset > match.end
-                        ? cursorOffset - match.end
-                        : 0;
-                return !best || distance < best.distance ? { match, distance } : best;
-            }, null);
-
-            if (nearest) {
-                return {
-                    latex: nearest.match.latex,
-                    display: nearest.match.display
-                };
-            }
+            if (containing) return toResult(containing);
         }
 
-        return {
-            latex: matches[0].latex,
-            display: matches[0].display
-        };
+        return allowSingleFallback && matches.length === 1 ? toResult(matches[0]) : null;
+    }
+
+    // 知乎行内、块级公式都用 .ztext-math；块级公式的 data-tex 通常以 `\\` 结尾，
+    // 或者公式独占一个段落。
+    function isZhihuDisplayMath(root, latex) {
+        if (/\\\\\s*$/.test(root.getAttribute('data-tex') || latex || '')) return true;
+
+        const block = root.parentElement?.closest('p, div, figure, li');
+        return !!block && block.textContent.trim() === root.textContent.trim();
+    }
+
+    function stripTrailingLineBreak(latex) {
+        return latex.replace(/\s*\\\\\s*$/, '');
     }
 
     function extractLatexFromMarkedRoot(root, event) {
@@ -477,31 +462,36 @@
         const descendantScript = root.querySelector('script[type^="math/tex"]')?.textContent || '';
         const descendantImageAlt = root.querySelector('img[alt]')?.getAttribute('alt') || '';
         const mathJaxLatex = getMathJaxOriginalText(root);
-
-        const { node, offset } = event ? getEventCaretPosition(event) : { node: null, offset: 0 };
-        const cursorOffset = getTextOffsetWithin(root, node, offset);
-        const delimitedText = extractDelimitedMath(root.textContent || '', cursorOffset);
-
-        const latex = firstNonEmpty(
+        const structuredLatex = firstNonEmpty(
             mathJaxLatex,
             annotationLatex,
             descendantScript,
             getAttributeLatex(root, true),
-            descendantImageAlt,
-            delimitedText?.latex || ''
+            descendantImageAlt
         );
 
+        let delimitedText = null;
+        if (!structuredLatex) {
+            const { node, offset } = event ? getEventCaretPosition(event) : { node: null, offset: 0 };
+            const cursorOffset = getTextOffsetWithin(root, node, offset);
+            delimitedText = extractDelimitedMath(root.textContent || '', cursorOffset, true);
+        }
+
+        const latex = structuredLatex || delimitedText?.latex || '';
         if (!latex) return null;
 
+        const isZhihu = root.classList.contains('ztext-math');
+        const clean = stripWikipediaPresentationWrapper(stripMathDelimiters(latex));
+
         return {
-            latex: stripWikipediaPresentationWrapper(stripMathDelimiters(latex)),
+            latex: isZhihu ? stripTrailingLineBreak(clean) : clean,
             display:
                 delimitedText?.display ||
                 root.classList.contains('MathJax_Display') ||
                 root.classList.contains('MathJax_SVG_Display') ||
                 root.classList.contains('MJXc-display') ||
                 root.classList.contains('katex-display') ||
-                root.classList.contains('ztext-math') ||
+                (isZhihu && isZhihuDisplayMath(root, latex)) ||
                 root.classList.contains('mwe-math-fallback-image-display') ||
                 root.classList.contains('mwe-math-mathml-display') ||
                 isProbablyBlock(root)
@@ -610,60 +600,8 @@
             }
         },
 
-        // 4) 原生 MathML
-        {
-            name: 'MathML',
-            matchTarget(target) {
-                return target.closest('math');
-            },
-            extract(root) {
-                const ann = root.querySelector('annotation[encoding="application/x-tex"]')
-                    || root.querySelector('annotation');
-                const latex = ann ? ann.textContent : '';
-
-                if (!latex) return null;
-
-                return {
-                    latex: normalizeLatex(latex),
-                    display: root.getAttribute('display') === 'block' || isProbablyBlock(root)
-                };
-            }
-        },
-
-        // 5) 知乎旧结构兼容
-        {
-            name: 'Zhihu legacy',
-            matchTarget(target) {
-                return target.closest('.math-holder, .ztext-math');
-            },
-            extract(root) {
-                // 知乎的容器里经常同时存在：
-                // 1. 渲染后的可见文本
-                // 2. 原始 LaTeX 属性
-                // 3. 隐藏的重复节点
-                // 直接读 textContent 很容易把这几份内容拼在一起，所以优先取结构化来源。
-                const annotationLatex = root.querySelector('annotation[encoding="application/x-tex"], math annotation')?.textContent || '';
-                const descendantAlt = root.querySelector('[alt]')?.getAttribute('alt') || '';
-                const textFallback = looksLikeLatex(root.textContent) ? root.textContent : '';
-                const latex = firstNonEmpty(
-                    getAttributeLatex(root, true),
-                    annotationLatex,
-                    descendantAlt,
-                    textFallback
-                );
-
-                if (!latex) return null;
-
-                const clean = stripMathDelimiters(latex);
-
-                return {
-                    latex: clean,
-                    display: root.classList.contains('ztext-math') || isProbablyBlock(root)
-                };
-            }
-        },
-
-        // 6) Wikipedia 公式容器
+        // 4) Wikipedia 公式容器：要排在原生 MathML 前面，
+        //    否则原生 MathML 渲染模式下会被 MathML 适配器抢先，复制出带 {\displaystyle ...} 的源码。
         {
             name: 'Wikipedia Math',
             matchTarget(target) {
@@ -688,51 +626,101 @@
                         container.classList.contains('mwe-math-fallback-image-display') ||
                         container.classList.contains('mwe-math-mathml-display') ||
                         !!container.closest('.mwe-math-display') ||
+                        !!container.querySelector('math[display="block"]') ||
                         isProbablyBlock(container)
                 };
             }
         },
 
-        // 7) 通用兜底：处理一些网站把公式直接塞进 data-*、aria-label 或 title 的情况
+        // 5) 原生 MathML
         {
-            name: 'Generic attributes fallback',
+            name: 'MathML',
             matchTarget(target) {
-                return target.closest('[data-tex], [data-latex], [aria-label], [title]');
+                return target.closest('math');
             },
             extract(root) {
-                const latex = getAttributeLatex(root, true);
+                const texAnnotation = root.querySelector('annotation[encoding="application/x-tex"]')?.textContent || '';
+                const anyAnnotation = root.querySelector('annotation')?.textContent || '';
+                const latex = firstNonEmpty(texAnnotation, looksLikeLatex(anyAnnotation) ? anyAnnotation : '');
 
-                if (latex && looksLikeLatex(latex)) {
-                    return {
-                        latex: normalizeLatex(latex),
-                        display: isProbablyBlock(root)
-                    };
-                }
+                if (!latex) return null;
 
-                return null;
+                return {
+                    latex: stripWikipediaPresentationWrapper(latex),
+                    display: root.getAttribute('display') === 'block' || isProbablyBlock(root)
+                };
             }
         },
 
-        // 8) Markdown / 博客正文中的原始定界符公式
+        // 6) 知乎
+        {
+            name: 'Zhihu',
+            matchTarget(target) {
+                return target.closest('.math-holder, .ztext-math');
+            },
+            extract(root) {
+                // 知乎的容器里经常同时存在：
+                // 1. 渲染后的可见文本
+                // 2. 原始 LaTeX 属性
+                // 3. 隐藏的重复节点
+                // 直接读 textContent 很容易把这几份内容拼在一起，所以优先取结构化来源。
+                const annotationLatex = root.querySelector('annotation[encoding="application/x-tex"], math annotation')?.textContent || '';
+                const descendantAlt = root.querySelector('[alt]')?.getAttribute('alt') || '';
+                const textFallback = looksLikeLatex(root.textContent) ? root.textContent : '';
+                const latex = firstNonEmpty(
+                    getAttributeLatex(root, true),
+                    annotationLatex,
+                    descendantAlt,
+                    textFallback
+                );
+
+                if (!latex) return null;
+
+                return {
+                    latex: stripTrailingLineBreak(stripMathDelimiters(latex)),
+                    display:
+                        (root.classList.contains('ztext-math') && isZhihuDisplayMath(root, latex)) ||
+                        isProbablyBlock(root)
+                };
+            }
+        },
+
+        // 7) 通用兜底：网站把公式源码放在 data-tex / data-latex 属性里。
+        //    不读 aria-label / title：普通链接、按钮、带用户名的容器都会带这些属性。
+        {
+            name: 'Generic attributes fallback',
+            matchTarget(target) {
+                return target.closest('[data-tex], [data-latex]');
+            },
+            extract(root) {
+                const latex = getAttributeLatex(root);
+                if (!latex) return null;
+
+                return {
+                    latex: stripMathDelimiters(latex),
+                    display: isProbablyBlock(root)
+                };
+            }
+        },
+
+        // 8) Markdown / 博客正文中的原始定界符公式：只有光标确实落在某个公式上才接管双击，
+        //    其余位置保留浏览器原生的双击选词。
         {
             name: 'Delimited text math',
             matchTarget(target, event) {
                 if (!event) return null;
 
-                const textContainer = target.closest('.arithmatex, .math, .MathJax_Preview');
-                return textContainer || findNearestTextMathContainer(target);
+                const textContainer = target.closest('.arithmatex, .MathJax_Preview');
+                if (textContainer) return textContainer;
+
+                return findNearestTextMathContainer(target);
             },
             extract(root, target, event) {
                 const { node, offset } = getEventCaretPosition(event);
                 const cursorOffset = getTextOffsetWithin(root, node, offset);
-                const extracted = extractDelimitedMath(root.textContent || '', cursorOffset);
+                const isMathContainer = root.matches('.arithmatex, .MathJax_Preview');
 
-                if (!extracted) return null;
-
-                return {
-                    latex: extracted.latex,
-                    display: extracted.display
-                };
+                return extractDelimitedMath(root.textContent || '', cursorOffset, isMathContainer);
             }
         },
 
@@ -770,48 +758,43 @@
 
     function markCopyable(root) {
         if (!(root instanceof Element)) return;
-        if (root.dataset.umlcBound === '1') return;
+        if (root.classList.contains('umlc-copyable')) return;
 
-        root.dataset.umlcBound = '1';
         root.classList.add('umlc-copyable');
-        if (!root.getAttribute('title')) {
-            root.title = COPY_HINT_TITLE;
-        }
     }
 
-    function scan(root = document) {
-        // 主动扫描一遍常见数学节点，给它们打上可复制标记。
-        const selectors = [
-            '.katex',
-            '.katex-display',
-            'mjx-container',
-            '.mjx-chtml',
-            '.mjx-svg',
-            '.MathJax',
-            '.MathJax_Display',
-            '.MathJax_Preview',
-            '.MathJax_SVG',
-            '.MathJax_SVG_Display',
-            '.MJXc-display',
-            '.arithmatex',
-            'math',
-            '.math-holder',
-            '.ztext-math',
-            '.mwe-math-element',
-            '.mwe-math-mathml-inline',
-            '.mwe-math-mathml-display',
-            '.mwe-math-fallback-image-inline',
-            '.mwe-math-fallback-image-display',
-            '[data-tex]',
-            '[data-latex]',
-            'script[type^="math/tex"]'
-        ];
+    // 主动扫描常见数学节点，给它们打上可复制标记（hover 样式 + 兜底适配器）。
+    const MATH_NODE_SELECTOR = [
+        '.katex',
+        '.katex-display',
+        'mjx-container',
+        '.mjx-chtml',
+        '.mjx-svg',
+        '.MathJax',
+        '.MathJax_Display',
+        '.MathJax_Preview',
+        '.MathJax_SVG',
+        '.MathJax_SVG_Display',
+        '.MJXc-display',
+        '.arithmatex',
+        'math',
+        '.math-holder',
+        '.ztext-math',
+        '.mwe-math-element',
+        '.mwe-math-mathml-inline',
+        '.mwe-math-mathml-display',
+        '.mwe-math-fallback-image-inline',
+        '.mwe-math-fallback-image-display',
+        '[data-tex]',
+        '[data-latex]',
+        'script[type^="math/tex"]'
+    ].join(', ');
 
-        const set = new Set();
-        for (const selector of selectors) {
-            root.querySelectorAll?.(selector).forEach(el => set.add(el));
+    function scan(root = document) {
+        if (root instanceof Element && root.matches(MATH_NODE_SELECTOR)) {
+            markCopyable(root);
         }
-        set.forEach(markCopyable);
+        root.querySelectorAll?.(MATH_NODE_SELECTOR).forEach(markCopyable);
     }
 
     document.addEventListener('dblclick', (event) => {
@@ -834,9 +817,12 @@
             return;
         }
 
-        // 公式命中后拦截原页面的双击逻辑，避免出现误选中文本或触发站点自带事件。
+        // 公式命中后拦截原页面的双击逻辑，避免触发站点自带的双击事件。
         event.preventDefault();
         event.stopPropagation();
+
+        // 双击选词在 mousedown 阶段就已发生，preventDefault 拦不住，这里手动清掉公式里的零碎选区。
+        window.getSelection()?.removeAllRanges();
 
         const rawOnly = event.shiftKey;
         const text = wrapLatex(info.latex, info.display, rawOnly);
@@ -878,7 +864,7 @@
             });
         }
 
-        log('initialized');
+        log('initialized', VERSION);
     }
 
     if (document.readyState === 'loading') {

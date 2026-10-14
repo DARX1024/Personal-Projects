@@ -34,3 +34,4 @@
 - Tampermonkey 脚本，主文件 `universal-math-latex-copier.user.js`，在所有网站运行（`@match *://*/*`）。
 - 按适配器顺序识别公式（KaTeX → MathJax → MathML → 知乎 → Wikipedia → 通用兜底），先命中先用；新增网站支持时加适配器，注意顺序。
 - 兜底逻辑只能在确认是公式时拦截双击，不能影响普通文字、代码块和可编辑区的选词。
+- 测试：`cd userscripts/universal-math-latex-copier && npm install && npm test`。测试在 jsdom 页面里运行整个脚本并模拟双击，不需要导出函数。

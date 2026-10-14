@@ -17,9 +17,20 @@ Tampermonkey 用户脚本：在大多数网站上**双击公式复制 LaTeX 源�
 | Wikipedia | TeX annotation 或图片 `alt`，并去掉外层 `{\displaystyle ...}` |
 | 其他 | `data-tex` / `data-latex` 属性；正文中未渲染的 `$...$`、`\(...\)` 等定界符公式 |
 
+正文里未渲染的定界符公式，只有双击位置**落在公式上**才会复制；代码块、输入框和可编辑区（如 Overleaf、各类编辑器）中不接管双击，普通选词不受影响。
+
 ## 安装
 
 1. 浏览器安装 Tampermonkey（或 Violentmonkey）。
 2. 打开 [universal-math-latex-copier.user.js 原始文件](https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js)，脚本管理器会弹出安装页。
 
 脚本通过 `@updateURL` 从本仓库 `main` 分支自动更新。
+
+## 开发
+
+```sh
+npm install
+npm test
+```
+
+测试用 Node 内置 `node:test` 和 jsdom，在模拟页面中双击各类公式节点，检查复制结果，以及普通文字、代码块、可编辑区不被接管。
