@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Universal Math LaTeX Copier
-// @namespace    https://openai.com/
+// @namespace    https://github.com/DARX1024/Personal-Scripts
 // @version      2.2.0
 // @description  在大多数网站上双击公式复制 LaTeX；普通双击复制为 Markdown 数学格式，Shift+双击复制纯 LaTeX
-// @author       OpenAI
+// @author       DARX1024
 // @match        *://*/*
 // @grant        GM_addStyle
 // @grant        GM_setClipboard
 // @run-at       document-end
+// @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
+// @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
 // ==/UserScript==
 
 (function () {

@@ -28,3 +28,9 @@
 - 中文标签词库在 `metadata-dictionary.json`，脚本通过 `@resource` 从本仓库 `main` 分支读取；改词库路径时同步改 `@resource`。
 - 测试：`cd userscripts/eh-torrent-downloader && npm install && npm test`（Node 22+，jsdom 提供 DOM）。
 - 脚本在 Node 中通过 `module.exports` 导出纯函数供测试；浏览器中不导出。
+
+### userscripts/universal-math-latex-copier
+
+- Tampermonkey 脚本，主文件 `universal-math-latex-copier.user.js`，在所有网站运行（`@match *://*/*`）。
+- 按适配器顺序识别公式（KaTeX → MathJax → MathML → 知乎 → Wikipedia → 通用兜底），先命中先用；新增网站支持时加适配器，注意顺序。
+- 兜底逻辑只能在确认是公式时拦截双击，不能影响普通文字、代码块和可编辑区的选词。

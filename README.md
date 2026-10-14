@@ -7,6 +7,7 @@
 | 路径 | 说明 |
 | --- | --- |
 | [`userscripts/eh-torrent-downloader`](userscripts/eh-torrent-downloader) | EH / EX 种子择优下载、原档下载、批量与去重；nhentai 导出中文 ComicInfo.xml（Tampermonkey 用户脚本） |
+| [`userscripts/universal-math-latex-copier`](userscripts/universal-math-latex-copier) | 双击网页公式复制 LaTeX，支持 KaTeX、MathJax、MathML、知乎、Wikipedia 等（Tampermonkey 用户脚本） |
 
 ## 约定
 
