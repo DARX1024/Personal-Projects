@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.0
+// @version      1.9.1
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -47,13 +47,13 @@
     const AUTO_KEY = 'autoOnGallery';
     const SAVE_AS_KEY = 'saveAs';
     const BATCH_INTERVAL_KEY = 'batchDownloadInterval';
-    const BATCH_INTERVAL_DEFAULT = { min: 2, max: 4 };
+    const BATCH_INTERVAL_DEFAULT = { min: 0.25, max: 0.5 };
     const HISTORY_KEY = 'downloadedTorrents';
     const HISTORY_LIMIT = 100;
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.0';
+    const VERSION = '1.9.1';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -72,11 +72,15 @@
     let metadataBusy = false;
     let metadataFlatLabels;
 
-    function metadataText(value) {
+    function decodeHTML(value) {
         // Decode API HTML entities while retaining literal angle brackets as text.
         const text = document.createElement('textarea');
         text.innerHTML = String(value || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return normalize(text.value.normalize('NFKC'));
+        return text.value;
+    }
+
+    function metadataText(value) {
+        return normalize(decodeHTML(value).normalize('NFKC'));
     }
 
     function metadataTitle(value) {
@@ -249,6 +253,47 @@
             || !Array.isArray(gallery.tags) || gallery.tags.some(t => typeof t !== 'string')) throw new Error('metadata API 缺少有效题名或标签。');
         // API 不返回画廊地址；按当前站点生成，EX 独有画廊在 EH 上无法打开。
         return { ...gallery, web: galleryURLForList(list) };
+    }
+
+    // gdata 每次最多查询 25 本画廊。
+    const GDATA_CHUNK = 25;
+
+    function gdataList(lists) {
+        return lists.map(list => {
+            const url = new URL(list);
+            return [Number(url.searchParams.get('gid')), url.searchParams.get('t').toLowerCase()];
+        });
+    }
+
+    // 只采用 gid 与 token 都和请求一致的记录；返回 gid → { titles, torrentcount }。
+    function galleryInfoFromAPI(responseText, gidlist) {
+        const result = new Map();
+        if (typeof responseText !== 'string' || responseText.length > 2 * 1024 * 1024) return result;
+        let records;
+        try { records = JSON.parse(responseText)?.gmetadata; } catch { return result; }
+        if (!Array.isArray(records)) return result;
+        for (const record of records) {
+            if (!record || typeof record !== 'object' || record.error || typeof record.token !== 'string') continue;
+            const gid = Number(record.gid);
+            if (!gidlist.some(([id, token]) => id === gid && token === record.token.toLowerCase())) continue;
+            const titles = [record.title, record.title_jpn].filter(t => typeof t === 'string' && t.trim())
+                .map(t => normalize(decodeHTML(t))).filter(Boolean);
+            const count = Number(record.torrentcount);
+            result.set(String(gid), { titles, torrentcount: Number.isSafeInteger(count) && count >= 0 ? count : null });
+        }
+        return result;
+    }
+
+    async function readEHGalleries(lists) {
+        const result = new Map();
+        for (let index = 0; index < lists.length; index += GDATA_CHUNK) {
+            const gidlist = gdataList(lists.slice(index, index + GDATA_CHUNK));
+            const response = await request(METADATA_API, false, location.href, { metadata: true, stage: '批量读取画廊信息',
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify({ method: 'gdata', gidlist }) });
+            for (const [gid, info] of galleryInfoFromAPI(response.responseText, gidlist)) result.set(gid, info);
+        }
+        return result;
     }
 
     async function downloadMetadata(anchor) {
@@ -889,7 +934,7 @@
         module.exports = { listURL, linkListURL, galleryListURL, fileURL, integer, postedTime, parseTorrents, chooseTorrent, filename, validateTorrent,
             titleFromPage, titlesFromPage, romajiTitle, romajiKey, titleKeys, normalizeHistory, duplicateDownloads, pushDownload,
             archiveURL, linkArchiveURL, archiveFromPage, archiveFileURL, sourcePrefix, archiveFilename, parseArchive };
-        Object.assign(module.exports, { rateLimitError, clipBytes, metadataDictionary, metadataTitle, metadataNumber, metadataLabels, metadataFields, metadataXML,
+        Object.assign(module.exports, { galleryInfoFromAPI, gdataList, rateLimitError, clipBytes, metadataDictionary, metadataTitle, metadataNumber, metadataLabels, metadataFields, metadataXML,
             nhGalleryURL, nhMetadataFromPage });
         return;
     }
@@ -1513,7 +1558,7 @@
             input.name = `batch-${key}-seconds`; input.value = String(current[key]);
             return input;
         });
-        element('p', '默认 2～4 秒；间隔过短容易触发网站限流或临时封禁 IP。两值相同则固定等待；都为 0 则不额外等待，仍逐个下载。', form).className = 'hint';
+        element('p', '默认 0.25～0.5 秒；遇到网站限流或临时封禁会自动停止整批。两值相同则固定等待；都为 0 则不额外等待，仍逐个下载。', form).className = 'hint';
         const message = element('p', undefined, form);
         message.className = 'bad'; message.setAttribute('role', 'alert');
         const save = element('button', '保存', form);
@@ -1779,6 +1824,15 @@
 
     async function processDownload(url, pageTitles, onDetailPage, lease, options = {}) {
         if (!options.batch) lease.notify('正在读取种子下载量和发布时间…');
+        const gid = new URL(url).searchParams.get('gid');
+        const knownTitles = [...pageTitles, ...(options.titles || [])];
+        // 批量时已用 API 取得题名：同一画廊或相同题名在请求种子列表前就跳过。
+        if (options.batch && !options.prepared && options.titles?.length) {
+            const title = knownTitles.find(value => romajiKey(value)) || knownTitles[0];
+            if ((await lease.matches(`${gid}:pending`, title, titleKeys(knownTitles))).length) {
+                return { status: 'duplicate', reason: '下载历史或当前任务中已有匹配', noRequest: true };
+            }
+        }
         const parsed = options.prepared || parseTorrents((await request(url)).responseText, url);
         if (!parsed.hasTorrentInfo && !parsed.records.length) throw new Error('未识别到种子列表，可能尚未登录、遇到验证或页面结构发生变化。');
         // 列表页的种子数量可能已经过时，以刚取得的完整种子列表为准。
@@ -1794,11 +1848,11 @@
             selected = await pickManually(parsed.records, url, decision);
             if (!selected) return { status: 'skipped', reason: '已取消选择' };
         }
-        const gid = new URL(url).searchParams.get('gid');
         const historyID = `${gid}:${selected.id}`;
-        let titles = [...pageTitles];
+        let titles = knownTitles;
         // 列表可能只显示日文；读取详情页的 #gn 和 #gj，保存站点给出的题名对应关系。
-        if (historyLimit() > 0 && (!onDetailPage || !titles.length)) {
+        // 批量时 API 已提供同样的题名对应关系，不再逐本读取详情页。
+        if (historyLimit() > 0 && !options.titles?.length && (!onDetailPage || !titles.length)) {
             try {
                 const gallery = await request(galleryURLForList(url), false, location.href, { timeoutMs: 8000, retry: false });
                 const doc = new DOMParser().parseFromString(gallery.responseText, 'text/html');
@@ -2061,13 +2115,16 @@
                     if (state.stopped) break;
                 }
                 const result = manual && !selected ? { status: 'skipped', reason: '已跳过人工选择' }
-                    : await enqueue(item.url, item.anchor, false, { batch: state,
+                    : !manual && item.torrentcount === 0 ? { status: 'empty', reason: '网站显示此画廊没有种子', noRequest: true }
+                    : await enqueue(item.url, item.anchor, false, { batch: state, titles: item.titles,
                         ...(manual ? { selected, prepared: item.prepared } : {}) });
+                const requested = !result.noRequest;
+                delete result.noRequest;
                 Object.assign(item, result);
                 if (item.status !== 'manual') { delete item.prepared; delete item.decision; }
                 updateBatchProgress(state);
                 if (state.stopped) break;
-                if (i < items.length - 1) await waitForBatchInterval(state);
+                if (requested && i < items.length - 1) await waitForBatchInterval(state);
             }
         } finally {
             state.cancelWait?.();
@@ -2147,6 +2204,14 @@
             batchPanel?.remove();
             state.panel = batchPanel = element('div', undefined, getUI().toasts);
             state.panel.className = 'notice batch'; state.panel.setAttribute('role', 'status');
+            state.panel.textContent = '正在读取画廊信息…';
+            try {
+                const info = await readEHGalleries(items.map(item => item.url));
+                for (const item of items) Object.assign(item, info.get(new URL(item.url).searchParams.get('gid')) || {});
+            } catch (error) {
+                // 限流时不再开始；API 其他故障时回退为逐本读取详情页。
+                if (error.code === 'RATE_LIMIT') throw error;
+            }
             await runBatchQueue(state, items);
             showBatchSummary(state);
         } catch (error) {

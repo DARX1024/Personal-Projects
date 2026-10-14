@@ -79,3 +79,23 @@ test('URL 识别', () => {
     assert.equal(m.listURL('https://evil.example/gallerytorrents.php?gid=1&t=abcdef0123'), null);
     assert.equal(m.nhGalleryURL('https://nhentai.net/g/42'), 'https://nhentai.net/g/42/');
 });
+
+test('gdata：批量请求参数', () => {
+    assert.deepEqual(m.gdataList([EX_LIST, 'https://e-hentai.org/gallerytorrents.php?gid=7&t=ABCDEF0123']),
+        [[123, 'abcdef0123'], [7, 'abcdef0123']]);
+});
+
+test('gdata：解析题名和种子数，只采用 gid / token 一致的记录', () => {
+    const gidlist = [[123, 'abcdef0123'], [456, '0123456789']];
+    const text = JSON.stringify({ gmetadata: [
+        { gid: 123, token: 'ABCDEF0123', title: 'Title &amp; More', title_jpn: '題名', torrentcount: '2' },
+        { gid: 456, token: 'ffffffffff', title: 'Wrong token', torrentcount: '1' },
+        { gid: 789, error: 'Key missing, or incorrect key provided.' },
+    ] });
+    const info = m.galleryInfoFromAPI(text, gidlist);
+    assert.deepEqual([...info.keys()], ['123']);
+    assert.deepEqual(info.get('123'), { titles: ['Title & More', '題名'], torrentcount: 2 });
+    assert.equal(m.galleryInfoFromAPI('{"gmetadata":[{"gid":123,"token":"abcdef0123","title":"","torrentcount":"0"}]}', gidlist)
+        .get('123').torrentcount, 0);
+    assert.equal(m.galleryInfoFromAPI('<html>banned</html>', gidlist).size, 0);
+});
