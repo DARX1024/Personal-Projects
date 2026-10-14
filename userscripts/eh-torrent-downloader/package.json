@@ -1,0 +1,11 @@
+{
+  "name": "eh-torrent-downloader",
+  "private": true,
+  "description": "Tampermonkey userscript tests (Node 22+)",
+  "scripts": {
+    "test": "node --check eh-torrent-downloader.user.js && node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}
