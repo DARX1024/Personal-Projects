@@ -1,0 +1,23 @@
+# 依赖与构建产物
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+
+# 本地配置与密钥（公开仓库，绝不提交）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
