@@ -15,7 +15,7 @@ const detailMenu = `<div id="gd5"><p class="g2"><a onclick="return popUp('${list
     <p class="g2"><a href="/archiver.php?gid=123&token=${token}">Archive Download</a></p></div>`;
 
 function load(html = '', { url = 'https://exhentai.org/', readyState = 'loading', empty = false,
-    auto = false, stalledTabs = false, script = source } = {}) {
+    auto = false, stalledTabs = false, settings = {}, globals = {}, script = source } = {}) {
     const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url, runScripts: 'outside-only' });
     const { window } = dom, { document } = window;
     // 保持页面处于 loading，独立模拟被慢脚本延后的 DOMContentLoaded。
@@ -34,7 +34,7 @@ function load(html = '', { url = 'https://exhentai.org/', readyState = 'loading'
         }
     }
     let tab = {};
-    const values = new Map([['autoOnGallery', auto]]);
+    const values = new Map([['autoOnGallery', auto], ...Object.entries(settings)]);
     Object.assign(window, {
         GM_info: { downloadMode: 'browser' },
         GM_getValue: (key, fallback) => values.has(key) ? values.get(key) : fallback,
@@ -47,6 +47,7 @@ function load(html = '', { url = 'https://exhentai.org/', readyState = 'loading'
         GM_getResourceText: () => { stats.resourceReads++; throw new Error('startup must not load the dictionary'); },
         GM_xmlhttpRequest: options => { requests.push(options); return { abort() {} }; },
         unsafeWindow: window,
+        ...globals,
     });
     window.eval(script);
     return { window, document, stats, menus, requests,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.2
+// @version      1.9.3
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.2';
+    const VERSION = '1.9.3';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -609,12 +609,15 @@
 
     function titleFromPage(doc, url, pageURL) {
         if (galleryListURL(pageURL) === url) return normalize(doc.querySelector('#gn')?.textContent || doc.querySelector('#gj')?.textContent);
+        let fallback = '';
         for (const link of doc.querySelectorAll('a[href*="/g/"]')) {
             if (galleryListURL(asURL(link.getAttribute('href'), pageURL)?.href) !== url) continue;
-            const title = normalize((link.querySelector('.glink, .glname') ?? link).textContent);
-            if (title) return title;
+            const label = link.querySelector('.glink, .glname');
+            const title = normalize((label ?? link).textContent);
+            if (label && title) return title;
+            fallback ||= title;
         }
-        return '';
+        return fallback;
     }
 
     function titlesFromPage(doc, url, pageURL) {
@@ -623,6 +626,10 @@
         }
         const title = titleFromPage(doc, url, pageURL);
         return title ? [title] : [];
+    }
+
+    function archiveTitleFromPage(doc) {
+        return normalize(doc.querySelector('#gj')?.textContent) || normalize(doc.querySelector('#gn')?.textContent);
     }
 
     function mainTitle(value) {
@@ -1103,6 +1110,7 @@
                 if (state.documentOwner !== pageOwner) throw new Error('旧页面任务已失效，请在当前页面重新操作。');
                 const deadline = Date.now() + MUTEX_TTL;
                 state.mutex = { owner: pageOwner, choosing: true, ticket: 0, expires: deadline };
+                let completed = false;
                 try {
                     await writeTab(tab);
                     let tabs = await tabCall(GM_getTabs);
@@ -1123,11 +1131,15 @@
                         await new Promise(resolve => setTimeout(resolve, 25));
                     }
                     if (Date.now() >= deadline - 500) throw coordinationError('跨标签页检查已过期。');
-                    return await operation(tab, tabs);
+                    const result = await operation(tab, tabs);
+                    completed = true;
+                    return result;
                 } finally {
                     delete state.mutex;
-                    // 清理失败不能覆盖已完成的下载或原本的报错。
-                    await writeTab(tab).catch(() => {});
+                    // 一次保存同时发布操作结果并释放锁，成功回调后其他页面才可接手。
+                    // 操作已失败时，清理失败不能覆盖原本的报错。
+                    if (completed) await writeTab(tab);
+                    else await writeTab(tab).catch(() => {});
                 }
             } catch (error) {
                 if (error.code !== 'COORDINATION') throw error;
@@ -1154,20 +1166,22 @@
         return { revision, entries: normalizeHistory(entries) };
     }
 
-    async function updateHistory(change) {
-        return coordinate(async (tab, tabs) => {
-            const current = sharedHistory(tabs);
-            const entries = normalizeHistory(change(current.entries));
-            const revision = current.revision + 1;
-            historyMirror = entries;
-            try {
-                GM_setValue(HISTORY_KEY, entries);
-                GM_setValue(HISTORY_REV_KEY, revision);
-            } catch { /* 历史写入失败不阻断下载，本页仍保留记录。 */ }
-            tabState(tab).history = { revision, entries };
-            await writeTab(tab);
-            return entries;
-        });
+    // 在已持有的跨页锁内更新历史，由 coordinate 与任务状态一起发布。
+    function changeHistory(tab, tabs, change) {
+        const current = sharedHistory(tabs);
+        const entries = normalizeHistory(change(current.entries));
+        const revision = current.revision + 1;
+        historyMirror = entries;
+        try {
+            GM_setValue(HISTORY_KEY, entries);
+            GM_setValue(HISTORY_REV_KEY, revision);
+        } catch { /* 历史写入失败不阻断下载，本页仍保留记录。 */ }
+        tabState(tab).history = { revision, entries };
+        return entries;
+    }
+
+    function updateHistory(change) {
+        return coordinate((tab, tabs) => changeHistory(tab, tabs, change));
     }
 
     async function reserveTask(url, titles, quiet = false) {
@@ -1175,12 +1189,11 @@
         const key = crypto.randomUUID();
         const task = { key, gid, owner: pageOwner, phase: 'preparing', id: `${gid}:pending`, title: titles[0] || `Gallery ${gid}`,
             keys: historyLimit() ? titleKeys(titles) : [], at: Date.now(), expires: Date.now() + CLAIM_TTL };
-        const accepted = await coordinate(async (tab, tabs) => {
+        const accepted = await coordinate((tab, tabs) => {
             if (liveTasks(tabs).some(other => other.gid === gid)) return false;
             const state = tabState(tab);
             state.tasks = (state.tasks || []).filter(other => other.expires > Date.now());
             state.tasks.push(task);
-            await writeTab(tab);
             return true;
         });
         if (!accepted) { if (!quiet) notify(`画廊 ${gid} 已有标签页正在准备或下载，本次没有重复启动。`); return null; }
@@ -1200,11 +1213,10 @@
             Object.assign(task, stored);
             return stored;
         };
-        const editTask = change => coordinate(async (tab, tabs) => {
+        const editTask = change => coordinate((tab, tabs) => {
             const stored = ownedTask(tab, tabs);
             change(stored, tab);
             Object.assign(task, stored);
-            await writeTab(tab);
             return true;
         });
         const heartbeat = setInterval(() => editTask(stored => { stored.expires = Date.now() + CLAIM_TTL; }).catch(() => {}), 60000);
@@ -1216,17 +1228,10 @@
                 state.archiveAttempts = [...new Set([...(state.archiveAttempts || []), gid])];
                 stored.phase = 'submitted';
             }),
-            async archiveReady() {
-                archiveAttempts.delete(gid);
-                await editTask((_stored, tab) => {
-                    archiveAttempts.delete(gid);
-                    tabState(tab).archiveAttempts = (tabState(tab).archiveAttempts || []).filter(value => value !== gid);
-                });
-            },
             notify: (text, link, persistent = false) => notify(text, link, persistent, key),
             async matches(id, title, keys) {
                 if (historyLimit() === 0) return [];
-                return coordinate(async (tab, tabs) => {
+                return coordinate((tab, tabs) => {
                     const stored = ownedTask(tab, tabs);
                     Object.assign(stored, { id, title, keys, expires: Date.now() + CLAIM_TTL });
                     Object.assign(task, stored);
@@ -1236,15 +1241,23 @@
                         .map(other => ({ ...other, status: 'started', job: other.key }));
                     const matches = [...duplicateDownloads(history, id, title, keys),
                         ...active.flatMap(other => duplicateDownloads([other], id, title, keys))];
-                    await writeTab(tab);
                     return matches;
                 });
             },
             async started(entry) {
-                await editTask(stored => { stored.phase = 'downloading'; });
-                if (historyLimit() === 0) return;
-                await updateHistory(history => pushDownload(history, { ...entry, job: key, status: 'started', at: Date.now() }))
-                    .catch(() => {});
+                await coordinate((tab, tabs) => {
+                    const stored = ownedTask(tab, tabs);
+                    stored.phase = 'downloading';
+                    Object.assign(task, stored);
+                    if (entry.id === `${gid}:archive:org`) {
+                        archiveAttempts.delete(gid);
+                        tabState(tab).archiveAttempts = (tabState(tab).archiveAttempts || []).filter(value => value !== gid);
+                    }
+                    if (historyLimit() > 0) {
+                        try { changeHistory(tab, tabs, history => pushDownload(history, { ...entry, job: key, status: 'started', at: Date.now() })); }
+                        catch { /* 历史不可用时仍保留正在下载的任务占位。 */ }
+                    }
+                });
             },
             async completed() {
                 if (historyLimit() === 0) return;
@@ -1261,9 +1274,8 @@
             async release() {
                 clearInterval(heartbeat);
                 pageTasks.delete(key);
-                await coordinate(async tab => {
+                await coordinate(tab => {
                     tabState(tab).tasks = (tabState(tab).tasks || []).filter(other => other.key !== key);
-                    await writeTab(tab);
                 }).catch(() => {});
             },
         };
@@ -1594,19 +1606,24 @@
         dialog.showModal();
     }
 
-    function confirmArchive(preview, titleText, url, retry = false) {
+    function confirmArchive(preview, titleText, url, retry = false, file = null) {
         return new Promise(resolve => {
             getUI().notice.replaceChildren();
             const dialog = element('dialog', undefined, getUI().shadow);
             element('h2', retry ? '重新申请原档' : '原档下载：费用与大小', dialog);
             element('p', titleText, dialog);
-            element('p', '将下载 Original 原档 ZIP。以下是网站显示的文件大小、GP / Credits 费用与额度；请核对原档对应信息。', dialog);
+            element('p', file ? '将下载已生成的 Original 原档 ZIP，可直接确认下载。'
+                : '将下载 Original 原档 ZIP。以下是网站显示的文件大小、GP / Credits 费用与额度；请核对原档对应信息。', dialog);
             const details = element('p', preview, dialog);
             details.style.cssText = 'padding:12px;background:#151b24;border-radius:6px;overflow-wrap:anywhere;';
+            const size = file ? element('p', '文件大小：正在查询，可直接确认下载。', dialog) : null;
+            size?.setAttribute('aria-live', 'polite');
+            const controller = file ? new AbortController() : null;
             let settled = false;
             const finish = proceed => {
                 if (settled) return;
                 settled = true;
+                controller?.abort();
                 dialog.close();
                 dialog.remove();
                 resolve(proceed);
@@ -1621,6 +1638,18 @@
             dialog.addEventListener('cancel', event => { event.preventDefault(); finish(false); });
             dialog.addEventListener('close', () => finish(false), { once: true });
             dialog.showModal();
+            if (file) {
+                // 仅补充已有 ZIP 的大小；不阻塞确认，不重试，关窗后终止查询。
+                request(file, false, url, { archive: true, method: 'HEAD', stage: '读取 ZIP 大小',
+                    timeoutMs: 3000, retry: false, signal: controller.signal }).then(head => {
+                    if (settled) return;
+                    const bytes = Number(head.responseHeaders?.match(/^content-length:\s*(\d+)/im)?.[1]);
+                    size.textContent = Number.isFinite(bytes) && bytes > 0 ? `文件大小：${(bytes / 1048576).toFixed(1)} MiB。`
+                        : '文件大小暂时无法读取，请以网站原下载页面为准。';
+                }).catch(() => {
+                    if (!settled) size.textContent = '文件大小暂时无法读取，请以网站原下载页面为准。';
+                });
+            }
         });
     }
 
@@ -1708,14 +1737,16 @@
             let finished = false;
             const timeout = options.timeoutMs ?? 30000;
             const stage = options.stage;
+            const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); };
             const fail = (message, code = 'RESPONSE', status) => {
                 if (finished) return;
-                finished = true; clearTimeout(timer);
+                finished = true; cleanup();
                 const error = new Error(stage ? `“${stage}”失败：${message}` : message);
                 error.code = code; error.status = status; reject(error);
             };
+            const abort = () => { fail('请求已取消。', 'ABORT'); handle?.abort(); };
             const timer = setTimeout(() => { fail(`等待 ${timeout / 1000} 秒超时。`, 'TIMEOUT'); handle?.abort(); }, timeout + 5000);
-            const finish = response => { finished = true; clearTimeout(timer); resolve(response); };
+            const finish = response => { finished = true; cleanup(); resolve(response); };
             // 文件响应头已提供可信归档地址时停止读取，随后交给浏览器原生下载。
             const streamArchive = response => {
                 if (!options.archive || options.method === 'HEAD' || response.status < 200 || response.status >= 300) return false;
@@ -1732,6 +1763,8 @@
                 return true;
             };
             try {
+                if (options.signal?.aborted) { abort(); return; }
+                options.signal?.addEventListener('abort', abort, { once: true });
                 handle = GM_xmlhttpRequest({
                     method: options.method || (options.data === undefined ? 'GET' : 'POST'), url, timeout, anonymous: false,
                     headers: { Referer: referer, ...(options.data === undefined ? {} : { 'Content-Type': 'application/x-www-form-urlencoded' }), ...options.headers },
@@ -1758,7 +1791,7 @@
                     onabort: () => fail('请求已取消。', 'ABORT'),
                 });
             } catch (error) {
-                clearTimeout(timer);
+                finished = true; cleanup();
                 reject(extensionDisconnected(error) ? new Error('油猴连接已失效，请刷新当前页面后再下载。') : error);
             }
         });
@@ -1833,10 +1866,21 @@
                 return { status: 'duplicate', reason: '下载历史或当前任务中已有匹配', noRequest: true };
             }
         }
-        const parsed = options.prepared || parseTorrents((await request(url)).responseText, url);
-        if (!parsed.hasTorrentInfo && !parsed.records.length) throw new Error('未识别到种子列表，可能尚未登录、遇到验证或页面结构发生变化。');
+        // 点击下载时题名与种子列表并行读取；批量仍按原节奏，历史检查仍早于种子文件请求。
+        const needsTitles = historyLimit() > 0 && !options.titles?.length && (!onDetailPage || !knownTitles.length);
+        const titleController = new AbortController();
+        const readTitles = () => request(galleryURLForList(url), false, location.href, { timeoutMs: 8000, retry: false, signal: titleController.signal })
+            .then(gallery => ({ titles: titlesFromPage(new DOMParser().parseFromString(gallery.responseText, 'text/html'), url, galleryURLForList(url)) }))
+            .catch(error => ({ error }));
+        const extraTitles = needsTitles && !options.batch ? readTitles() : null;
+        let parsed;
+        try {
+            parsed = options.prepared || parseTorrents((await request(url)).responseText, url);
+            if (!parsed.hasTorrentInfo && !parsed.records.length) throw new Error('未识别到种子列表，可能尚未登录、遇到验证或页面结构发生变化。');
+        } catch (error) { titleController.abort(); throw error; }
         // 列表页的种子数量可能已经过时，以刚取得的完整种子列表为准。
         if (!parsed.records.length && !parsed.issues.length) {
+            titleController.abort();
             if (!options.batch) lease.notify('此画廊当前没有可下载的种子。', url);
             return { status: 'empty', reason: '当前没有可下载的种子' };
         }
@@ -1846,22 +1890,14 @@
             if (options.batch) return { status: 'manual', prepared: parsed, decision, reason: decision.reason };
             getUI().notice.replaceChildren();
             selected = await pickManually(parsed.records, url, decision);
-            if (!selected) return { status: 'skipped', reason: '已取消选择' };
+            if (!selected) { titleController.abort(); return { status: 'skipped', reason: '已取消选择' }; }
         }
         const historyID = `${gid}:${selected.id}`;
-        let titles = knownTitles;
-        // 列表可能只显示日文；读取详情页的 #gn 和 #gj，保存站点给出的题名对应关系。
-        // 批量时 API 已提供同样的题名对应关系，不再逐本读取详情页。
-        if (historyLimit() > 0 && !options.titles?.length && (!onDetailPage || !titles.length)) {
-            try {
-                const gallery = await request(galleryURLForList(url), false, location.href, { timeoutMs: 8000, retry: false });
-                const doc = new DOMParser().parseFromString(gallery.responseText, 'text/html');
-                titles.push(...titlesFromPage(doc, url, galleryURLForList(url)));
-            } catch (error) {
-                if (error.code === 'RATE_LIMIT') throw error;
-                /* 详情不可用时仍可用画廊 ID、种子 ID 和已有题名检查。 */
-            }
-        }
+        if (!options.batch) lease.notify('正在核对题名和下载记录…');
+        const extra = await (extraTitles || (needsTitles ? readTitles() : { titles: [] }));
+        if (extra.error?.code === 'RATE_LIMIT') throw extra.error;
+        // 详情不可用时仍可用画廊 ID、种子 ID 和已有题名检查。
+        let titles = [...knownTitles, ...(extra.titles || [])];
         if (!titles.length) titles = [selected.name];
         const title = titles.find(value => romajiKey(value)) || titles[0];
         const keys = titleKeys(titles);
@@ -1896,19 +1932,25 @@
         const gid = new URL(list).searchParams.get('gid');
         let url = `${new URL(list).origin}/archiver.php?gid=${gid}&token=${new URL(list).searchParams.get('t')}`;
         let titles = [...pageTitles];
-        if (historyLimit() > 0) {
+        // 原档按站点提供的日文题名命名；两种题名仍一起用于历史去重。
+        // 详情页已有题名和入口时直接复用，列表页则独立于历史开关补齐题名。
+        let title = galleryListURL(location.href) === list ? archiveTitleFromPage(document) : '';
+        if (title) {
+            url = archiveFromPage(document, list, location.href) || url;
+        } else {
             lease.notify('正在读取画廊题名和原档入口…');
             try {
                 const gallery = await request(galleryURL, false, location.href, { page: true, stage: '读取画廊题名', timeoutMs: 8000, retry: false });
                 const doc = new DOMParser().parseFromString(gallery.responseText, 'text/html');
                 url = archiveFromPage(doc, list, galleryURL) || url;
                 titles = [...titlesFromPage(doc, list, galleryURL), ...titles];
+                title = archiveTitleFromPage(doc);
             } catch (error) {
                 if (error.code === 'RATE_LIMIT') throw error;
                 /* 题名请求失败不阻断归档：仍可按画廊 ID 和列表标题去重。 */
             }
         }
-        const title = titles.find(value => romajiKey(value)) || titles[0] || `Gallery ${gid}`;
+        title ||= titles[0] || `Gallery ${gid}`;
         const keys = titleKeys(titles);
         const historyID = `${gid}:archive:org`;
         const matches = await lease.matches(historyID, title, keys);
@@ -1923,15 +1965,8 @@
             const result = response.archiveFile ? { file: response.archiveFile }
                 : parseArchive(response.responseText, response.finalUrl || url, list);
             if (result.file) {
-                await lease.archiveReady();
                 if (!submitted && GM_getValue(ARCHIVE_CONFIRM_KEY, true)) {
-                    let size = '未能读取，请以网站原下载页面为准';
-                    try {
-                        const head = await request(result.file, false, url, { archive: true, method: 'HEAD', stage: '读取 ZIP 大小', timeoutMs: 10000 });
-                        const bytes = Number(head.responseHeaders?.match(/^content-length:\s*(\d+)/im)?.[1]);
-                        if (Number.isFinite(bytes) && bytes > 0) size = `${(bytes / 1048576).toFixed(1)} MiB`;
-                    } catch { /* HEAD 不可用时仍让用户看到无法识别的大小。 */ }
-                    if (!await confirmArchive(`文件大小：${size}。网站已提供 ZIP 地址，此次不提交新的归档申请。`, title, url)) {
+                    if (!await confirmArchive('网站已提供 ZIP 地址，此次不提交新的归档申请。', title, url, false, result.file)) {
                         lease.notify('已取消原档下载。');
                         return;
                     }
