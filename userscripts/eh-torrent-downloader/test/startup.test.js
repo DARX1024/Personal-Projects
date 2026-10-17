@@ -34,6 +34,16 @@ test('document-start：根节点尚未创建，随后分段插入的搜索结果
     assert.equal(page.requests.length, 0);
 });
 
+test('document-start：根节点尚未创建时显示提示不报错，根节点出现后挂载', async t => {
+    const page = load('', { empty: true });
+    t.after(page.close);
+    const menu = page.menus.find(item => item.name.startsWith('切换：下载弹出另存为'));
+    assert.doesNotThrow(() => menu.callback());
+    page.document.append(page.document.createElement('html'));
+    await page.flush();
+    assert.ok(page.document.querySelector('#ehtd-ui')?.shadowRoot.querySelector('.notice').textContent);
+});
+
 test('详情页：菜单先出现即可使用，迟到的种子与原档入口也能补齐', async t => {
     const page = load('<h1 id="gn">Example</h1>', { url: 'https://exhentai.org/g/123/abcdef0123/' });
     t.after(page.close);

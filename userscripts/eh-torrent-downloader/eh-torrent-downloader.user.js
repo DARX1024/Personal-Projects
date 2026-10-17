@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.3
+// @version      1.9.4
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.3';
+    const VERSION = '1.9.4';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -1292,7 +1292,13 @@
         if (ui) return ui;
         const host = element('div');
         host.id = 'ehtd-ui';
-        (document.body ?? document.documentElement).append(host);
+        // document-start 时根节点可能尚未创建：先在离线节点上准备提示，根节点出现后再挂载。
+        const mount = () => (document.body ?? document.documentElement).append(host);
+        if (document.documentElement) mount();
+        else new MutationObserver((_, observer) => {
+            if (!document.documentElement) return;
+            observer.disconnect(); mount();
+        }).observe(document, { childList: true });
         const shadow = host.attachShadow({ mode: 'open' });
         element('style', `
             :host { all: initial; font: 14px/1.6 system-ui, sans-serif; }
