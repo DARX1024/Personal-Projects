@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.1
+// @version      1.9.2
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.1';
+    const VERSION = '1.9.2';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -385,7 +385,7 @@
             if (scheduled) return;
             scheduled = true;
             queueMicrotask(() => { scheduled = false; prepareNHMetadataLink(); });
-        }).observe(document.documentElement, { childList: true, subtree: true, characterData: true,
+        }).observe(document, { childList: true, subtree: true, characterData: true,
             attributes: true, attributeFilter: ['href', 'id'] });
         window.addEventListener('popstate', prepareNHMetadataLink);
         GM_registerMenuCommand('切换：下载弹出另存为', () => {
@@ -2267,8 +2267,48 @@
             for (const image of anchor.querySelectorAll('img')) image.title = title;
         }
         prepareArchiveIcons(root);
+    }
+
+    function preparePageActions() {
         prepareSearchActions();
+        const detail = galleryListURL(location.href);
+        if (detail) prepareDetailArchiveIcon(detail);
         prepareMetadataLink();
+    }
+
+    function observeLinks() {
+        const roots = new Set();
+        let scheduled = false;
+        // 自己创建的按钮不再反过来触发整行扫描；页面新增内容仍正常处理。
+        const owned = '#ehtd-ui, #ehtd-search-tools, a[data-ehtd-archive], [data-ehtd-detail-archive-slot], [data-ehtd-metadata-slot]';
+        const collect = node => {
+            if (node.nodeType !== 1 || !node.isConnected || node.closest(owned)) return;
+            const root = node.closest('.gl1t, .gl1e, .itg tr') || node;
+            for (let parent = root; parent; parent = parent.parentElement) if (roots.has(parent)) return;
+            for (const other of roots) if (root.contains(other)) roots.delete(other);
+            roots.add(root);
+        };
+        new MutationObserver(changes => {
+            for (const change of changes) {
+                if (change.type === 'attributes') {
+                    const anchor = change.target;
+                    // prepareLinks 写入的 href / 移除的 onclick 无需再处理。
+                    if (anchor.dataset.ehtdList && !anchor.hasAttribute('onclick')
+                        && linkListURL(anchor, location.href) === anchor.dataset.ehtdList) continue;
+                    collect(anchor);
+                }
+                for (const node of change.addedNodes) collect(node);
+            }
+            if (scheduled || !roots.size) return;
+            scheduled = true;
+            // 合并同批父子节点和同一行变动，并让浏览器有机会继续解析与绘制。
+            setTimeout(() => {
+                scheduled = false;
+                const batch = [...roots]; roots.clear();
+                for (const root of batch) if (root.isConnected) prepareLinks(root);
+                preparePageActions();
+            }, 0);
+        }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'onclick'] });
     }
 
     function createArchiveIcon(list) {
@@ -2321,16 +2361,19 @@
     }
 
     function prepareArchiveIcons(root) {
-        const detail = galleryListURL(location.href);
-        if (detail) { prepareDetailArchiveIcon(detail); return; }
+        if (galleryListURL(location.href)) return;
         const rowSelector = '.gl1t, .gl1e, .itg tr';
         const scope = root.closest?.(rowSelector) || root;
         const anchors = [...(scope.querySelectorAll?.('a[href*="/g/"]') ?? [])];
         if (scope.matches?.('a[href*="/g/"]')) anchors.unshift(scope);
+        const seen = new Map();
         for (const galleryLink of anchors) {
             const list = galleryListURL(asURL(galleryLink.getAttribute('href'), location.href)?.href);
             const row = galleryLink.closest(rowSelector);
             if (!list || !row) continue;
+            if (!seen.has(row)) seen.set(row, new Set());
+            if (seen.get(row).has(list)) continue;
+            seen.get(row).add(list);
             const current = new Set([...row.querySelectorAll('a[href*="/g/"]')]
                 .map(link => galleryListURL(asURL(link.getAttribute('href'), location.href)?.href)).filter(Boolean));
             for (const old of row.querySelectorAll('a[data-ehtd-archive]')) if (!current.has(old.dataset.ehtdArchive)) old.remove();
@@ -2386,12 +2429,8 @@
         }
         // 先准备操作入口，辅助历史或扩展登记不可用也不会让按钮消失。
         prepareLinks(document);
-        new MutationObserver(changes => {
-            for (const change of changes) {
-                if (change.type === 'attributes') prepareLinks(change.target);
-                for (const node of change.addedNodes) if (node.nodeType === 1) prepareLinks(node);
-            }
-        }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'onclick'] });
+        preparePageActions();
+        observeLinks();
 
         GM_registerMenuCommand('切换：打开详情页自动下载', () => {
             const enabled = !GM_getValue(AUTO_KEY, false);
@@ -2423,7 +2462,12 @@
             await updateHistory(() => []);
             notify('已清除下载记录。');
         });
-        await updateHistory(history => history).catch(() => {});
+        const historyReady = updateHistory(history => history).catch(() => {});
+        // 按钮随页面片段立即出现；自动下载仍等待完整题名与原生菜单。
+        if (document.readyState === 'loading') {
+            await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }));
+        }
+        await historyReady;
         const url = galleryListURL(location.href);
         if (url && GM_getValue(AUTO_KEY, false)) {
             const anchor = [...document.querySelectorAll('a[data-ehtd-list]')].find(item => item.dataset.ehtdList === url);
@@ -2441,9 +2485,8 @@
         pageInitialization = null;
         coordinationRetryAt = 0;
         prepareLinks(document);
+        preparePageActions();
         updateHistory(history => history).catch(() => {});
     });
-    const initialize = () => start().catch(error => notifyError(error, location.href, 'initialize'));
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true });
-    else initialize();
+    start().catch(error => notifyError(error, location.href, 'initialize'));
 })();
