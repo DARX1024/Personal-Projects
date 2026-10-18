@@ -10,7 +10,7 @@ Tampermonkey 用户脚本：
 ## 安装
 
 1. 浏览器安装 Tampermonkey，并在设置中将 **下载模式** 设为 **Browser API**，允许 `torrent`、`zip`、`xml` 扩展名。
-2. 打开 [eh-torrent-downloader.user.js 原始文件](https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/eh-torrent-downloader/eh-torrent-downloader.user.js)，Tampermonkey 会弹出安装页。
+2. 打开 [eh-torrent-downloader.user.js 原始文件](https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/eh-torrent-downloader/eh-torrent-downloader.user.js)，Tampermonkey 会弹出安装页。
 
 脚本通过 `@updateURL` 从本仓库 `main` 分支自动更新；中文词库 `metadata-dictionary.json` 通过 `@resource` 随脚本安装。
 

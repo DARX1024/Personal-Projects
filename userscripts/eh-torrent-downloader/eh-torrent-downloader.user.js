@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.4
+// @version      1.9.5
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -28,9 +28,9 @@
 // @connect      ehtracker.org
 // @connect      hath.network
 // @connect      api.e-hentai.org
-// @resource     metadataDictionary https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/eh-torrent-downloader/metadata-dictionary.json
-// @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/eh-torrent-downloader/eh-torrent-downloader.user.js
-// @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/eh-torrent-downloader/eh-torrent-downloader.user.js
+// @resource     metadataDictionary https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/eh-torrent-downloader/metadata-dictionary.json
+// @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/eh-torrent-downloader/eh-torrent-downloader.user.js
+// @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/eh-torrent-downloader/eh-torrent-downloader.user.js
 // ==/UserScript==
 
 (() => {
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.4';
+    const VERSION = '1.9.5';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
