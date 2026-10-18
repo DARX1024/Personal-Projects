@@ -1,0 +1,8 @@
+{
+  "policy": "ehtag-zh-v1",
+  "source": "https://github.com/EhTagTranslation/Database",
+  "schema_version": 7,
+  "commit": "0eaf24ee6ffea4a744f7d597e8471d9d365b883e",
+  "sha256": "aeace2e3edcae234e98f2b9d8a0a9a590bbf2b2f8842c497f4ce6a9429c4d909",
+  "overrides_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+}

@@ -1,4 +1,12 @@
-# 依赖与构建产物
+# Local runtime, operational data and private configuration
+/runtime/
+/cache/
+/state/
+/config.json
+/data/translations/overrides.json
+/tests/.temporary/
+
+# Dependencies and generated files
 node_modules/
 __pycache__/
 *.py[cod]
@@ -6,8 +14,11 @@ __pycache__/
 venv/
 dist/
 build/
+.pytest_cache/
+.coverage
+htmlcov/
 
-# 本地配置与密钥（公开仓库，绝不提交）
+# Local credentials
 .env
 .env.*
 !.env.example
@@ -15,7 +26,7 @@ build/
 *.key
 secrets.*
 
-# 系统与编辑器
+# Editors and operating systems
 .DS_Store
 Thumbs.db
 .idea/

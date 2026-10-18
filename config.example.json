@@ -1,0 +1,18 @@
+{
+  "libraries": {
+    "H": {
+      "root": "C:/Manga",
+      "flat": false
+    },
+    "E": {
+      "root": "E:/Manga",
+      "flat": false
+    }
+  },
+  "komga": {
+    "enabled": false,
+    "app_data": "C:/Users/YOUR_NAME/AppData/Local/Komga",
+    "executable": "C:/Apps/Komga/Komga.exe",
+    "port": 25600
+  }
+}
