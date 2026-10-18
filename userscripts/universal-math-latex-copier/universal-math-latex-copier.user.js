@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Universal Math LaTeX Copier
-// @namespace    https://github.com/DARX1024/Personal-Scripts
-// @version      2.3.0
+// @namespace    https://github.com/DARX1024/Personal-Projects
+// @version      2.3.1
 // @description  在大多数网站上双击公式复制 LaTeX；普通双击复制为 Markdown 数学格式，Shift+双击复制纯 LaTeX
 // @author       DARX1024
 // @match        *://*/*
@@ -9,14 +9,14 @@
 // @grant        GM_setClipboard
 // @grant        unsafeWindow
 // @run-at       document-end
-// @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
-// @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
+// @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
+// @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const VERSION = '2.3.0';
+    const VERSION = '2.3.1';
 
     // 统一配置项，后续需要改交互或样式时，优先从这里调整。
     const CONFIG = {

@@ -22,7 +22,7 @@ Tampermonkey 用户脚本：在大多数网站上**双击公式复制 LaTeX 源�
 ## 安装
 
 1. 浏览器安装 Tampermonkey（或 Violentmonkey）。
-2. 打开 [universal-math-latex-copier.user.js 原始文件](https://raw.githubusercontent.com/DARX1024/Personal-Scripts/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js)，脚本管理器会弹出安装页。
+2. 打开 [universal-math-latex-copier.user.js 原始文件](https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/universal-math-latex-copier/universal-math-latex-copier.user.js)，脚本管理器会弹出安装页。
 
 脚本通过 `@updateURL` 从本仓库 `main` 分支自动更新。
 
