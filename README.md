@@ -1,4 +1,4 @@
-# Personal-Scripts
+# Personal-Projects
 
 个人兴趣项目与日常小脚本合集。
 
