@@ -1,10 +1,10 @@
 # Local runtime, operational data and private configuration
-/runtime/
-/cache/
-/state/
-/config.json
-/data/translations/overrides.json
-/tests/.temporary/
+/Manga/runtime/
+/Manga/cache/
+/Manga/state/
+/Manga/config.json
+/Manga/data/translations/overrides.json
+/Manga/tests/.temporary/
 
 # Dependencies and generated files
 node_modules/

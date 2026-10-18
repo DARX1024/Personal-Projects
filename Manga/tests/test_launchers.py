@@ -30,9 +30,11 @@ class Launchers(unittest.TestCase):
         self.env.pop('MANGA_INTAKE_PYTHON', None)
 
     def powershell(self, code, env=None):
+        # PowerShell 5.1 emits localized diagnostics; pin both sides to UTF-8.
+        code = '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); ' + code
         return subprocess.run(['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive',
                                '-ExecutionPolicy', 'Bypass', '-Command', code],
-                              env=env or self.env, capture_output=True, text=True, timeout=25)
+                              env=env or self.env, capture_output=True, text=True, encoding='utf-8', timeout=25)
 
     def resolve(self, options='', setup='', env=None):
         return self.powershell("$ErrorActionPreference='Stop'; . " + quote(self.root / 'runtime.ps1')

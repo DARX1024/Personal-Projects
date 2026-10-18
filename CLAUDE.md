@@ -12,9 +12,9 @@
 
 ## 仓库结构
 
-- 漫画整理程序位于根目录（`scripts/`、`tests/`、`data/`）；浏览器脚本按 `userscripts/<name>/` 分组。
+- 漫画整理程序位于 `Manga/`（内含 `scripts/`、`tests/`、`data/`）；浏览器脚本按 `userscripts/<name>/` 分组。
 - 每个项目目录有自己的 `README.md`；新增项目时同步更新根目录 `README.md` 的目录表。
-- 浏览器脚本测试放在项目目录的 `test/` 下，用项目自带的 `package.json` 运行；漫画程序用 Python unittest，见 `AGENTS.md` 和 `docs/使用说明.md`。
+- 浏览器脚本测试放在项目目录的 `test/` 下，用项目自带的 `package.json` 运行；漫画程序用 Python unittest，见 `Manga/AGENTS.md` 和 `Manga/docs/使用说明.md`。
 
 ## 安全
 
