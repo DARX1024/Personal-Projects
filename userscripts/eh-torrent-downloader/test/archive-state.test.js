@@ -37,10 +37,10 @@ test('归档解析：普通中转立即继续，meta refresh 保留网站延时'
     assert.throws(() => m.parseArchive('<a href="https://exhentai.org/archive/456/a/b">Original</a>', archiver, list));
 });
 
-async function setup(t, { detail = true, confirm = false, fetch } = {}) {
+async function setup(t, { detail = true, confirm = false, fetch, settings = {} } = {}) {
     const page = load(detail ? gallery : `${searchForm}<table class="itg">${galleryRow(123)}</table>`, {
         url: detail ? 'https://exhentai.org/g/123/abcdef0123/' : 'https://exhentai.org/', readyState: 'complete',
-        settings: { confirmArchiveCost: confirm },
+        settings: { confirmArchiveCost: confirm, ...settings },
     });
     t.after(page.close);
     const w = page.window, xhrs = [], saves = [], waits = [], fetches = [], dialogs = [];
@@ -152,6 +152,82 @@ test('原档加速：列表题名和费用页并行发出，取消费用确认�
     assert.ok(page.dialogs[0].textContent.includes('日本語の題名'));
     [...page.dialogs[0].querySelectorAll('button')].find(button => button.textContent === '取消下载').click();
     await until(page, () => !page.anchor.hasAttribute('aria-busy'), '取消后结束');
+    assert.equal(page.xhrs.length, 0);
+    assert.equal(page.saves.length, 0);
+});
+
+test('review：已提供下载链接时，普通 Please wait 文案不应使流程停在原页', () => {
+    assert.deepEqual(m.parseArchive(`<p>Please wait while your download starts.</p><a href="${zip}">Original</a>`, archiver, list),
+        { next: zip, waitMs: 0 });
+});
+
+test('review：关闭窗口等无关定时器不能延迟已就绪下载或覆盖实际 30 秒轮询', () => {
+    const unrelated = '<script>setTimeout("window.close()", 600000);</script>';
+    assert.deepEqual(m.parseArchive(`<a href="${zip}">Original</a>${unrelated}`, archiver, list), { next: zip, waitMs: 0 });
+    assert.deepEqual(m.parseArchive(processing + unrelated, pending, list), { next: pending, waitMs: 30000 });
+});
+
+test('review：详情页取消重复下载时，不应提前请求归档页', async t => {
+    const page = await setup(t, { settings: { downloadedTorrents: [{ id: '123:archive:org', gid: '123',
+        title: '日本語の題名', keys: [], at: Date.now() }] } });
+    page.anchor.click();
+    await until(page, () => page.dialogs.length === 1, '展示重复提醒');
+    assert.ok(page.dialogs[0].textContent.includes('重复'));
+    assert.equal(page.fetches.length, 0);
+    [...page.dialogs[0].querySelectorAll('button')].find(button => button.textContent.includes('取消')).click();
+    await until(page, () => !page.anchor.hasAttribute('aria-busy'), '取消后结束');
+    assert.equal(page.xhrs.length, 0);
+    assert.equal(page.saves.length, 0);
+});
+
+test('review：并行预读已返回限流时，即使详情页给出不同归档参数也必须停止', async t => {
+    let resolveTitle;
+    const page = await setup(t, { detail: false, fetch: url => new URL(url).pathname.startsWith('/g/')
+        ? new Promise(resolve => { resolveTitle = resolve; })
+        : new Response('Too many requests', { status: 429 }) });
+    page.anchor.click();
+    await until(page, () => page.fetches.length === 2, '已并行开始');
+    await page.flush();
+    resolveTitle(new Response(gallery.replace('token=abcdef0123', 'token=abcdef0123&or=example')));
+    await until(page, () => !page.anchor.hasAttribute('aria-busy'), '限流后结束');
+    assert.equal(page.fetches.length, 2, '不能在收到 429 后向新归档地址继续请求');
+    assert.equal(page.xhrs.length, 0);
+    assert.equal(page.saves.length, 0);
+});
+
+test('review：去掉中转延时后，循环跳转必须提前停止，避免连续请求 60 次', async t => {
+    const first = 'https://exhentai.org/archive/123/example/a?start=1';
+    const second = 'https://exhentai.org/archive/123/example/b?start=1';
+    const page = await setup(t, { fetch: () => new Response(`<a href="${first}">Original</a>`) });
+    page.window.GM_xmlhttpRequest = options => {
+        page.xhrs.push({ options });
+        queueMicrotask(() => options.onload({ status: 200, finalUrl: options.url, responseHeaders: 'content-type: text/html',
+            responseText: `<a href="${options.url === first ? second : first}">Original</a>` }));
+        return { abort() {} };
+    };
+    page.anchor.click();
+    await until(page, () => !page.anchor.hasAttribute('aria-busy'), '循环应立即结束');
+    assert.equal(page.xhrs.length, 2);
+    assert.equal(page.saves.length, 0);
+});
+
+test('review：详情页给出不同归档参数时，停止未完成预读并正常显示新入口的费用', async t => {
+    let previewAborted = false;
+    const page = await setup(t, { detail: false, confirm: true, fetch: (url, options) => {
+        if (new URL(url).pathname.startsWith('/g/')) return new Response(gallery.replace('token=abcdef0123', 'token=abcdef0123&or=example'));
+        if (new URL(url).searchParams.has('or')) return new Response(form);
+        return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => {
+            previewAborted = true; reject(new Error('Aborted preview'));
+        }, { once: true }));
+    } });
+    page.anchor.click();
+    await until(page, () => page.dialogs.length === 1, '旧请求取消后新归档页面可用');
+    assert.equal(previewAborted, true);
+    assert.equal(page.fetches.length, 3);
+    assert.ok(page.fetches.at(-1).url.includes('or=example'));
+    assert.ok(page.dialogs[0].textContent.includes('10 GP'));
+    [...page.dialogs[0].querySelectorAll('button')].find(button => button.textContent === '取消下载').click();
+    await until(page, () => !page.anchor.hasAttribute('aria-busy'), '费用取消后结束');
     assert.equal(page.xhrs.length, 0);
     assert.equal(page.saves.length, 0);
 });

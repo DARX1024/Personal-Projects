@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.6
+// @version      1.9.7
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.6';
+    const VERSION = '1.9.7';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -592,7 +592,8 @@
         const redirects = scripts.flatMap(script =>
             [...script.textContent.matchAll(/(?:(?:document|window)\.)?location(?:\.href)?\s*=\s*['"]([^'"]+)['"]/gi),
                 ...script.textContent.matchAll(/(?:(?:document|window)\.)?location\.(?:replace|assign)\(\s*['"]([^'"]+)['"]\s*\)/gi)].map(match => match[1]));
-        const delays = scripts.flatMap(script => [...script.textContent.matchAll(/setTimeout\s*\(\s*(?:"[^"]*"|'[^']*'|[\w$.]+)\s*,\s*(\d+)\s*\)/gi)]
+        // 站点使用 gotonext 继续归档；其他定时器（例如关窗）不属于下载等待。
+        const delays = scripts.flatMap(script => [...script.textContent.matchAll(/setTimeout\s*\(\s*(?:"gotonext\(\)"|'gotonext\(\)'|gotonext)\s*,\s*(\d+)\s*\)/gi)]
             .map(match => Number(match[1])));
         for (const meta of doc.querySelectorAll('meta[http-equiv]')) {
             if (meta.getAttribute('http-equiv').toLowerCase() !== 'refresh') continue;
@@ -606,11 +607,10 @@
         const waitMs = delays.length ? Math.max(...delays) : waiting ? 3000 : 0;
         const continuation = [...doc.querySelectorAll('#continue a[href]')].map(link => link.getAttribute('href'));
         if (waiting) {
-            for (const value of [...continuation, ...redirects, base]) {
+            for (const value of [...continuation, ...redirects]) {
                 const next = archivePageURL(value.replace(/&amp;/g, '&'), base, list);
                 if (next) return { next, waitMs: Math.max(1000, waitMs) };
             }
-            throw new Error('未识别到有效的原档准备地址，请打开原归档入口。');
         }
         const files = [];
         for (const link of doc.querySelectorAll('a[href]')) {
@@ -622,7 +622,7 @@
         }
         const explicit = files.filter(item => item.original);
         const candidates = [...new Set((explicit.length ? explicit : files).map(item => item.file))];
-        if (candidates.length === 1) return { next: candidates[0], waitMs };
+        if (candidates.length === 1) return { next: candidates[0], waitMs: 0 };
         if (candidates.length > 1) throw new Error('归档页面存在多个无法区分的下载地址，请打开原入口选择 Original 原档。');
         for (const link of doc.querySelectorAll('#continue a[href], #db a[href]')) {
             const next = archivePageURL(link.getAttribute('href'), base, list);
@@ -632,6 +632,10 @@
             const decoded = value.replace(/&amp;/g, '&');
             const next = archivePageURL(decoded, base, list);
             if (next) return { next, waitMs };
+        }
+        if (waiting) {
+            const next = archivePageURL(base, base, list);
+            if (next) return { next, waitMs: Math.max(1000, waitMs) };
         }
         throw new Error('未识别到 Original 原档表单或 ZIP 地址，可能需要登录、验证，或网站页面已变化。请打开原归档入口。');
     }
@@ -1978,10 +1982,10 @@
         let title = galleryListURL(location.href) === list ? archiveTitleFromPage(document) : '';
         if (title) url = archiveFromPage(document, list, location.href) || url;
         // 只读费用页与补齐题名并行；付费 POST 和保存仍等待去重、费用确认。
-        const previewURL = url, previewController = new AbortController();
-        const preview = request(previewURL, false, galleryURL, { archive: true, page: true,
+        const previewURL = url, previewController = title ? null : new AbortController();
+        const preview = previewController ? request(previewURL, false, galleryURL, { archive: true, page: true,
             stage: '读取归档费用', timeoutMs: 60000, signal: previewController.signal })
-            .then(response => ({ response }), error => ({ error }));
+            .then(response => ({ response }), error => ({ error })) : null;
         try {
             if (!title) {
                 lease.notify('正在读取画廊题名和原档入口…');
@@ -2006,16 +2010,20 @@
             }
             lease.notify('正在读取原档费用与文件大小…', undefined, true);
             let response;
-            if (url === previewURL) {
+            if (preview && url === previewURL) {
                 const initial = await preview;
                 if (initial.error) throw initial.error;
                 response = initial.response;
             } else {
-                previewController.abort();
+                previewController?.abort();
+                // 详情给出不同归档参数时可放弃预读，但不能忽略已收到的限流。
+                const initial = preview && await preview;
+                if (initial?.error?.code === 'RATE_LIMIT') throw initial.error;
                 response = await request(url, false, galleryURL, { archive: true, page: true, stage: '读取归档费用', timeoutMs: 60000 });
             }
             let submitted = archiveAttempts.has(gid);
             let waitedMs = 0;
+            const immediateHops = new Set();
             for (let attempt = 0; attempt < 60; attempt++) {
                 const result = response.archiveFile ? { file: response.archiveFile }
                     : parseArchive(response.responseText, response.finalUrl || url, list);
@@ -2064,13 +2072,18 @@
                 const current = response.finalUrl || url;
                 const waitMs = result.waitMs || (result.next === current ? 3000 : 0);
                 if (waitedMs + waitMs > 180000) break;
+                if (waitMs) immediateHops.clear();
+                else {
+                    if (immediateHops.has(result.next)) throw new Error('归档页面出现循环跳转，已停止请求，请打开原归档入口。');
+                    immediateHops.add(result.next);
+                }
                 lease.notify(waitMs ? `网站正在准备原档，${Math.ceil(waitMs / 1000)} 秒后检查…` : '正在连接原档下载…', url, true);
                 if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
                 waitedMs += waitMs;
                 response = await request(result.next, false, current, { archive: true, stage: '等待原档准备', timeoutMs: 60000 });
             }
             throw new Error('原档准备超过等待时间，请打开原归档入口查看进度；脚本不会再次提交付费申请。');
-        } finally { previewController.abort(); }
+        } finally { previewController?.abort(); }
     }
 
     function enqueue(url, anchor = null, archive = false, options = {}) {
