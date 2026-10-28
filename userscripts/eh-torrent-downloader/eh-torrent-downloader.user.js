@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.8
+// @version      1.9.8.1
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.8';
+    const VERSION = '1.9.8.1';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -607,12 +607,12 @@
         const waiting = /preparing|creating|locating|processing|being processed|please wait|正在(?:准备|生成|建立|寻找)|准备中|生成中/i.test(pageText);
         // 网站明确给出的延时始终保留；按等待文案推断的 3 秒只用于没有文件地址的情况。
         const explicitWait = delays.length ? Math.max(...delays) : 0;
-        const waitMs = explicitWait || (waiting ? 3000 : 0);
+        const waitMs = delays.length ? explicitWait : waiting ? 3000 : 0;
         const continuation = [...doc.querySelectorAll('#continue a[href]')].map(link => link.getAttribute('href'));
         if (waiting) {
             for (const value of [...continuation, ...redirects]) {
                 const next = archivePageURL(value.replace(/&amp;/g, '&'), base, list);
-                if (next) return { next, waitMs: Math.max(1000, waitMs) };
+                if (next) return { next, waitMs };
             }
         }
         const files = [];
@@ -638,7 +638,7 @@
         }
         if (waiting) {
             const next = archivePageURL(base, base, list);
-            if (next) return { next, waitMs: Math.max(1000, waitMs) };
+            if (next) return { next, waitMs };
         }
         throw new Error('未识别到 Original 原档表单或 ZIP 地址，可能需要登录、验证，或网站页面已变化。请打开原归档入口。');
     }
@@ -1973,9 +1973,49 @@
         return { status: 'done' };
     }
 
+    // 调试时间线只记录地址类型和关键参数，不输出画廊 token、归档密钥或下载路径。
+    function archiveDebugURL(value) {
+        const url = asURL(value);
+        if (!url) return String(value).slice(0, 40);
+        const host = url.hostname === 'hath.network' || url.hostname.endsWith('.hath.network') ? 'hath' : url.hostname;
+        const path = /^\/archive\//.test(url.pathname) ? '/archive/…' : url.pathname.replace(/\/g\/(\d+)\/[^/]+/, '/g/$1/…');
+        const query = [...url.searchParams.keys()].map(key => ['start', 'autostart', 'gid'].includes(key) ? `${key}=${url.searchParams.get(key)}` : key);
+        return `${host}${path}${query.length ? '?' + query.join('&') : ''}`;
+    }
+
+    function archiveDebugResponse(response) {
+        if (response.archiveFile) return 'ZIP 文件头';
+        const type = /^content-type:\s*([^;\r\n]+)/im.exec(response.responseHeaders || '')?.[1] || '?';
+        return `${type}, ${(response.responseText || '').length} 字符, 最终 ${archiveDebugURL(response.finalUrl || '')}`;
+    }
+
     async function processArchive(list, pageTitles, lease) {
         // 在申请可能付费的归档之前检查下载模式，避免配置错误后才发现无法保存。
         requireBrowserDownload();
+        // 调试版：在控制台输出每一步耗时，结束时汇总一次，便于定位等待花在哪里。
+        const traceStart = performance.now(), trace = [];
+        let userMs = 0;
+        const mark = (step, detail = '') => {
+            const entry = `${String(Math.round(performance.now() - traceStart)).padStart(6)} ms  ${step}${detail ? '  ' + detail : ''}`;
+            trace.push(entry);
+            console.debug('[EHTD 原档调试]', entry);
+        };
+        const timed = async (step, url, promise) => {
+            const begin = performance.now();
+            mark(`→ ${step}`, archiveDebugURL(url));
+            try {
+                const response = await promise;
+                mark(`← ${step} ${Math.round(performance.now() - begin)} ms`, archiveDebugResponse(response));
+                return response;
+            } catch (error) {
+                mark(`× ${step} ${Math.round(performance.now() - begin)} ms`, `${error.code || ''} ${redactErrorText(error.message)}`);
+                throw error;
+            }
+        };
+        const asked = async promise => {
+            const begin = performance.now();
+            try { return await promise; } finally { userMs += performance.now() - begin; }
+        };
         const galleryURL = galleryURLForList(list);
         const gid = new URL(list).searchParams.get('gid');
         let url = `${new URL(list).origin}/archiver.php?gid=${gid}&token=${new URL(list).searchParams.get('t')}`;
@@ -1986,14 +2026,15 @@
         if (title) url = archiveFromPage(document, list, location.href) || url;
         // 只读费用页与补齐题名并行；付费 POST 和保存仍等待去重、费用确认。
         const previewURL = url, previewController = title ? null : new AbortController();
-        const preview = previewController ? request(previewURL, false, galleryURL, { archive: true, page: true,
-            stage: '读取归档费用', timeoutMs: 60000, signal: previewController.signal })
+        mark('开始', `${title ? '详情页' : '列表页'}，入口 ${archiveDebugURL(url)}`);
+        const preview = previewController ? timed('预读费用页', previewURL, request(previewURL, false, galleryURL, { archive: true, page: true,
+            stage: '读取归档费用', timeoutMs: 60000, signal: previewController.signal }))
             .then(response => ({ response }), error => ({ error })) : null;
         try {
             if (!title) {
                 lease.notify('正在读取画廊题名和原档入口…');
                 try {
-                    const gallery = await request(galleryURL, false, location.href, { page: true, stage: '读取画廊题名', timeoutMs: 8000, retry: false });
+                    const gallery = await timed('读取画廊题名', galleryURL, request(galleryURL, false, location.href, { page: true, stage: '读取画廊题名', timeoutMs: 8000, retry: false }));
                     const doc = new DOMParser().parseFromString(gallery.responseText, 'text/html');
                     url = archiveFromPage(doc, list, galleryURL) || url;
                     titles = [...titlesFromPage(doc, list, galleryURL), ...titles];
@@ -2007,7 +2048,8 @@
             const keys = titleKeys(titles);
             const historyID = `${gid}:archive:org`;
             const matches = await lease.matches(historyID, title, keys);
-            if (matches.length && !await confirmDuplicate(matches, title, url)) {
+            mark('去重检查完成', `${matches.length} 条匹配`);
+            if (matches.length && !await asked(confirmDuplicate(matches, title, url))) {
                 lease.notify('已取消重复下载。');
                 return;
             }
@@ -2015,6 +2057,7 @@
             let response;
             if (preview && url === previewURL) {
                 const initial = await preview;
+                mark('使用预读结果');
                 if (initial.error) throw initial.error;
                 response = initial.response;
             } else {
@@ -2022,7 +2065,7 @@
                 // 详情给出不同归档参数时可放弃预读，但不能忽略已收到的限流。
                 const initial = preview && await preview;
                 if (initial?.error?.code === 'RATE_LIMIT') throw initial.error;
-                response = await request(url, false, galleryURL, { archive: true, page: true, stage: '读取归档费用', timeoutMs: 60000 });
+                response = await timed('读取费用页', url, request(url, false, galleryURL, { archive: true, page: true, stage: '读取归档费用', timeoutMs: 60000 }));
             }
             let submitted = archiveAttempts.has(gid);
             let waitedMs = 0;
@@ -2030,17 +2073,21 @@
             for (let attempt = 0; attempt < 60; attempt++) {
                 const result = response.archiveFile ? { file: response.archiveFile }
                     : parseArchive(response.responseText, response.finalUrl || url, list);
+                mark(`解析第 ${attempt + 1} 页`, result.file ? '已取得 ZIP 地址' : result.form ? '申请表单'
+                    : `下一跳 ${archiveDebugURL(result.next)}，网站延时 ${result.waitMs} ms`);
                 if (result.file) {
                     if (!archivePageURL(result.file, url, list)) throw new Error('原档响应地址与当前画廊不符，请打开原归档入口。');
                     if (!submitted && GM_getValue(ARCHIVE_CONFIRM_KEY, true)) {
-                        if (!await confirmArchive('网站已提供 ZIP 地址，此次不提交新的归档申请。', title, url, false, result.file, response.responseHeaders)) {
+                        if (!await asked(confirmArchive('网站已提供 ZIP 地址，此次不提交新的归档申请。', title, url, false, result.file, response.responseHeaders))) {
                             lease.notify('已取消原档下载。');
                             return;
                         }
                     }
                     await lease.started({ id: historyID, gid, title, keys, sourceURL: galleryURL });
+                    mark('交给浏览器下载', archiveDebugURL(result.file));
                     try { await save(result.file, archiveFilename(title, gid, list), true, lease.key); }
                     catch (error) { await lease.failed(); throw error; }
+                    mark('浏览器下载完成');
                     await lease.completed();
                     clearTaskNotice(lease.key);
                     return;
@@ -2049,7 +2096,7 @@
                     const preview = submitted
                         ? `上次申请没有取得下载地址，网站仍显示申请表单。重新申请可能再次扣除网站显示的费用。 ${result.preview}`
                         : result.preview;
-                    if ((submitted || GM_getValue(ARCHIVE_CONFIRM_KEY, true)) && !await confirmArchive(preview, title, url, submitted)) {
+                    if ((submitted || GM_getValue(ARCHIVE_CONFIRM_KEY, true)) && !await asked(confirmArchive(preview, title, url, submitted))) {
                         lease.notify('已取消原档下载，未提交归档申请。');
                         return;
                     }
@@ -2059,12 +2106,12 @@
                     try {
                         // 申请可能 HTTP 跳转到 Hath；同源 fetch 无法接收跨域跳转。
                         // 使用扩展请求只提交一次，在已验证的文件响应头阶段停止读取并交给浏览器。
-                        response = await request(result.form.url, false, url, { data: result.form.data, archive: true, stage: '申请 Original 原档', timeoutMs: 180000 });
+                        response = await timed('提交原档申请', result.form.url, request(result.form.url, false, url, { data: result.form.data, archive: true, stage: '申请 Original 原档', timeoutMs: 180000 }));
                     } catch (error) {
                         if (!['TIMEOUT', 'NETWORK'].includes(error.code)) throw error;
                         lease.notify('原档申请未收到响应，正在检查服务器是否已准备完成；不会再次提交申请…', url, true);
                         try {
-                            response = await request(url, false, galleryURL, { archive: true, stage: '检查原档申请结果', timeoutMs: 60000 });
+                            response = await timed('检查申请结果', url, request(url, false, galleryURL, { archive: true, stage: '检查原档申请结果', timeoutMs: 60000 }));
                         } catch (check) {
                             throw new Error(`${error.message} ${check.message} 再点下载可检查结果；网站仍显示申请表单时，可选择重新申请。`);
                         }
@@ -2080,13 +2127,22 @@
                     if (immediateHops.has(result.next)) throw new Error('归档页面出现循环跳转，已停止请求，请打开原归档入口。');
                     immediateHops.add(result.next);
                 }
-                lease.notify(waitMs ? `网站正在准备原档，${Math.ceil(waitMs / 1000)} 秒后检查…` : '正在连接原档下载…', url, true);
-                if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
+                // 短于 3 秒的中转只显示一条进度，长等待才显示倒计时。
+                lease.notify(waitMs >= 3000 ? `网站正在准备原档，${Math.ceil(waitMs / 1000)} 秒后检查…` : '正在准备原档下载…', url, true);
+                if (waitMs) { mark(`等待 ${waitMs} ms`); await new Promise(resolve => setTimeout(resolve, waitMs)); }
                 waitedMs += waitMs;
-                response = await request(result.next, false, current, { archive: true, stage: '等待原档准备', timeoutMs: 60000 });
+                response = await timed('请求下一跳', result.next, request(result.next, false, current, { archive: true, stage: '等待原档准备', timeoutMs: 60000 }));
             }
             throw new Error('原档准备超过等待时间，请打开原归档入口查看进度；脚本不会再次提交付费申请。');
-        } finally { previewController?.abort(); }
+        } catch (error) {
+            mark('出错', `${error.code || ''} ${redactErrorText(error.message)}`);
+            throw error;
+        } finally {
+            previewController?.abort();
+            const total = performance.now() - traceStart;
+            console.info(`[EHTD 原档调试] 画廊 ${gid}：总计 ${Math.round(total)} ms，其中等待用户确认 ${Math.round(userMs)} ms，`
+                + `脚本与网络 ${Math.round(total - userMs)} ms。复制以下时间线即可：\n${trace.join('\n')}`);
+        }
     }
 
     function enqueue(url, anchor = null, archive = false, options = {}) {

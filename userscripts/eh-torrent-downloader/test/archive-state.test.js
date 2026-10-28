@@ -245,3 +245,12 @@ test('review：gotonext 定时器的常见写法都按网站延时等待', () =>
     }
     assert.equal(m.parseArchive(processing.replace('setTimeout("gotonext()", 30000)', 'setTimeout(function(){ window.close(); }, 600000)'), pending, list).waitMs, 3000);
 });
+
+test('review：准备页按网站给出的短延时继续，不再强制补足 1 秒', () => {
+    const locating = (timer) => `<p>Locating archive server and preparing file for download...</p>
+<p id="continue"><a href="https://test.hath.network/archive/example/job?autostart=1">Click here</a></p>
+<script>function gotonext() { document.location = "https://test.hath.network/archive/example/job?autostart=1"; } ${timer}</script>`;
+    assert.equal(m.parseArchive(locating('setTimeout("gotonext()", 0);'), archiver, list).waitMs, 0);
+    assert.equal(m.parseArchive(locating('setTimeout("gotonext()", 500);'), archiver, list).waitMs, 500);
+    assert.equal(m.parseArchive(locating(''), archiver, list).waitMs, 3000, '无网站延时时仍用 3 秒默认值');
+});
