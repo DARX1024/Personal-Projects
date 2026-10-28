@@ -254,3 +254,38 @@ test('review：准备页按网站给出的短延时继续，不再强制补足 1
     assert.equal(m.parseArchive(locating('setTimeout("gotonext()", 500);'), archiver, list).waitMs, 500);
     assert.equal(m.parseArchive(locating(''), archiver, list).waitMs, 3000, '无网站延时时仍用 3 秒默认值');
 });
+
+test('review：准备页指向下载服务器 autostart 时直接改为 start=1；站内处理页地址不改', () => {
+    const page = `<p>Locating archive server and preparing file for download...</p>
+<p id="continue"><a href="https://test.hath.network/archive/example/job?autostart=1">Click here</a></p>
+<script>function gotonext() { document.location = "https://test.hath.network/archive/example/job?autostart=1"; } setTimeout("gotonext()", 1);</script>`;
+    assert.deepEqual(m.parseArchive(page, archiver, list), { next: 'https://test.hath.network/archive/example/job?start=1', waitMs: 1 });
+    assert.equal(new URL(m.parseArchive(processing, pending, list).next).searchParams.has('start'), false);
+});
+
+async function shortDelayFlow(t, reply) {
+    const page = await setup(t, { fetch: () => new Response(reply('https://exhentai.org/archiver.php?gid=123&token=abcdef0123')) });
+    page.window.GM_xmlhttpRequest = options => {
+        page.xhrs.push({ options });
+        queueMicrotask(() => options.onload({ status: 200, finalUrl: options.url, responseHeaders: 'content-type: text/html', responseText: reply(options.url) }));
+        return { abort() {} };
+    };
+    page.anchor.click();
+    return page;
+}
+
+test('review：页面指向自身且网站延时极短时，仍至少隔 3 秒检查', async t => {
+    const self = 'https://test.hath.network/archive/example/job?start=1';
+    const html = `<p>Please wait</p><p id="continue"><a href="${self}">Click</a></p><script>setTimeout("gotonext()", 1);</script>`;
+    const page = await shortDelayFlow(t, () => html);
+    await until(page, () => page.polls().some(item => item.ms === 3000) && page.xhrs.length === 1, '同址检查前等待 3 秒');
+    assert.equal(page.xhrs.length, 1);
+});
+
+test('review：两个页面以极短延时互跳时，循环检测仍能停止', async t => {
+    const a = 'https://test.hath.network/archive/example/a?start=1', b = 'https://test.hath.network/archive/example/b?start=1';
+    const page = await shortDelayFlow(t, url => `<p>Please wait</p><p id="continue"><a href="${url === a ? b : a}">Click</a></p><script>setTimeout("gotonext()", 1);</script>`);
+    await until(page, () => !page.anchor.hasAttribute('aria-busy'), '循环应很快结束');
+    assert.ok(page.xhrs.length <= 3, `请求了 ${page.xhrs.length} 次`);
+    assert.equal(page.saves.length, 0);
+});

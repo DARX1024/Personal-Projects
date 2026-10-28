@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.8.1
+// @version      1.9.8.2
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.8.1';
+    const VERSION = '1.9.8.2';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -612,7 +612,13 @@
         if (waiting) {
             for (const value of [...continuation, ...redirects]) {
                 const next = archivePageURL(value.replace(/&amp;/g, '&'), base, list);
-                if (next) return { next, waitMs };
+                if (!next) continue;
+                // 下载服务器的 autostart 中转页只给出 ?start=1 链接；直接请求 start=1，仍须收到 ZIP 文件头才保存。
+                const host = new URL(next).hostname;
+                if ((host === 'hath.network' || host.endsWith('.hath.network')) && new URL(next).searchParams.has('autostart')) {
+                    return { next: archiveFileURL(next), waitMs };
+                }
+                return { next, waitMs };
             }
         }
         const files = [];
@@ -2120,9 +2126,10 @@
                 }
                 if (!result.next) throw new Error('未识别到有效的原档准备地址，请打开原归档入口。');
                 const current = response.finalUrl || url;
-                const waitMs = result.waitMs || (result.next === current ? 3000 : 0);
+                // 同址轮询至少隔 3 秒；不足 1 秒的中转视为立即跳转，参与循环检测。
+                const waitMs = result.next === current ? Math.max(3000, result.waitMs || 0) : result.waitMs || 0;
                 if (waitedMs + waitMs > 180000) break;
-                if (waitMs) immediateHops.clear();
+                if (waitMs >= 1000) immediateHops.clear();
                 else {
                     if (immediateHops.has(result.next)) throw new Error('归档页面出现循环跳转，已停止请求，请打开原归档入口。');
                     immediateHops.add(result.next);
