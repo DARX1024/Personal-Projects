@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.7
+// @version      1.9.8
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.7';
+    const VERSION = '1.9.8';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -593,8 +593,9 @@
             [...script.textContent.matchAll(/(?:(?:document|window)\.)?location(?:\.href)?\s*=\s*['"]([^'"]+)['"]/gi),
                 ...script.textContent.matchAll(/(?:(?:document|window)\.)?location\.(?:replace|assign)\(\s*['"]([^'"]+)['"]\s*\)/gi)].map(match => match[1]));
         // 站点使用 gotonext 继续归档；其他定时器（例如关窗）不属于下载等待。
-        const delays = scripts.flatMap(script => [...script.textContent.matchAll(/setTimeout\s*\(\s*(?:"gotonext\(\)"|'gotonext\(\)'|gotonext)\s*,\s*(\d+)\s*\)/gi)]
-            .map(match => Number(match[1])));
+        // 兼容 "gotonext()"、"gotonext();"、gotonext、function(){ gotonext(); }、() => gotonext() 等写法。
+        const delays = scripts.flatMap(script => [...script.textContent.matchAll(/setTimeout\s*\(\s*(?:(["'])\s*gotonext\(\)\s*;?\s*\1|gotonext|function\s*\(\s*\)\s*\{\s*gotonext\(\)\s*;?\s*\}|\(\s*\)\s*=>\s*(?:\{\s*gotonext\(\)\s*;?\s*\}|gotonext\(\)))\s*,\s*(\d+)\s*\)/gi)]
+            .map(match => Number(match[2])));
         for (const meta of doc.querySelectorAll('meta[http-equiv]')) {
             if (meta.getAttribute('http-equiv').toLowerCase() !== 'refresh') continue;
             const content = meta.getAttribute('content') || '';
@@ -604,7 +605,9 @@
             if (match) redirects.push(match[1].trim());
         }
         const waiting = /preparing|creating|locating|processing|being processed|please wait|正在(?:准备|生成|建立|寻找)|准备中|生成中/i.test(pageText);
-        const waitMs = delays.length ? Math.max(...delays) : waiting ? 3000 : 0;
+        // 网站明确给出的延时始终保留；按等待文案推断的 3 秒只用于没有文件地址的情况。
+        const explicitWait = delays.length ? Math.max(...delays) : 0;
+        const waitMs = explicitWait || (waiting ? 3000 : 0);
         const continuation = [...doc.querySelectorAll('#continue a[href]')].map(link => link.getAttribute('href'));
         if (waiting) {
             for (const value of [...continuation, ...redirects]) {
@@ -622,7 +625,7 @@
         }
         const explicit = files.filter(item => item.original);
         const candidates = [...new Set((explicit.length ? explicit : files).map(item => item.file))];
-        if (candidates.length === 1) return { next: candidates[0], waitMs: 0 };
+        if (candidates.length === 1) return { next: candidates[0], waitMs: explicitWait };
         if (candidates.length > 1) throw new Error('归档页面存在多个无法区分的下载地址，请打开原入口选择 Original 原档。');
         for (const link of doc.querySelectorAll('#continue a[href], #db a[href]')) {
             const next = archivePageURL(link.getAttribute('href'), base, list);

@@ -231,3 +231,17 @@ test('review：详情页给出不同归档参数时，停止未完成预读并�
     assert.equal(page.xhrs.length, 0);
     assert.equal(page.saves.length, 0);
 });
+
+test('review：等待文案未识别时，文件地址仍保留 gotonext 和 meta refresh 的网站延时', () => {
+    const queued = processing.replace('The file is already being processed. Please contact staff if it is not ready within a few minutes.', 'Your archive is queued.');
+    assert.equal(m.parseArchive(queued, pending, list).waitMs, 30000);
+    assert.equal(m.parseArchive('<meta http-equiv="refresh" content="30"><p>Queued.</p><a href="?start=1">Click Here To Start Downloading</a>', pending, list).waitMs, 30000);
+});
+
+test('review：gotonext 定时器的常见写法都按网站延时等待', () => {
+    for (const timer of ['setTimeout("gotonext();", 30000)', "setTimeout('gotonext()', 30000)", 'setTimeout(gotonext, 30000)',
+        'setTimeout(function(){ gotonext(); }, 30000)', 'setTimeout(() => gotonext(), 30000)', 'setTimeout(() => { gotonext(); }, 30000)']) {
+        assert.equal(m.parseArchive(processing.replace('setTimeout("gotonext()", 30000)', timer), pending, list).waitMs, 30000, timer);
+    }
+    assert.equal(m.parseArchive(processing.replace('setTimeout("gotonext()", 30000)', 'setTimeout(function(){ window.close(); }, 600000)'), pending, list).waitMs, 3000);
+});
