@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EH / EX 种子择优下载
 // @namespace    local.mangah.eh-torrent-downloader
-// @version      1.9.8.2
+// @version      1.9.9
 // @description  EH / EX 下载、批量和去重；nhentai 仅增加下载 metadata，导出中文 ComicInfo.xml。
 // @match        *://e-hentai.org/*
 // @match        *://exhentai.org/*
@@ -53,7 +53,7 @@
     const HISTORY_LIMIT_KEY = 'historyLimit';
     const ARCHIVE_CONFIRM_KEY = 'confirmArchiveCost';
     const TITLE_LIMIT = 512;
-    const VERSION = '1.9.8.2';
+    const VERSION = '1.9.9';
     const HISTORY_REV_KEY = 'downloadHistoryRevision';
     const TAB_STATE_KEY = 'ehtdCoordination151';
     const CLAIM_TTL = 180000;
@@ -1998,7 +1998,7 @@
     async function processArchive(list, pageTitles, lease) {
         // 在申请可能付费的归档之前检查下载模式，避免配置错误后才发现无法保存。
         requireBrowserDownload();
-        // 调试版：在控制台输出每一步耗时，结束时汇总一次，便于定位等待花在哪里。
+        // 每一步耗时只用 console.debug 输出（控制台默认隐藏，选 Verbose 级别可见），便于定位等待花在哪里。
         const traceStart = performance.now(), trace = [];
         let userMs = 0;
         const mark = (step, detail = '') => {
@@ -2147,7 +2147,7 @@
         } finally {
             previewController?.abort();
             const total = performance.now() - traceStart;
-            console.info(`[EHTD 原档调试] 画廊 ${gid}：总计 ${Math.round(total)} ms，其中等待用户确认 ${Math.round(userMs)} ms，`
+            console.debug(`[EHTD 原档调试] 画廊 ${gid}：总计 ${Math.round(total)} ms，其中等待用户确认 ${Math.round(userMs)} ms，`
                 + `脚本与网络 ${Math.round(total - userMs)} ms。复制以下时间线即可：\n${trace.join('\n')}`);
         }
     }
