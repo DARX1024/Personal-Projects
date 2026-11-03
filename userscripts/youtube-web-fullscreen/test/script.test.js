@@ -10,7 +10,8 @@ before(async () => { browser = await chromium.launch({ channel: 'chrome' }); });
 after(async () => { await browser?.close(); });
 
 const player = `<ytd-player><div id="movie_player" tabindex="0">
-    <video></video><div class="ytp-right-controls"><button class="ytp-fullscreen-button">全屏</button></div>
+    <div class="html5-video-container"><video></video></div>
+    <div class="ytp-right-controls"><button class="ytp-size-button">剧场模式</button><button class="ytp-fullscreen-button">全屏</button></div>
 </div></ytd-player>`;
 
 async function openPage(t, pathname) {
@@ -71,6 +72,7 @@ test('网页全屏覆盖导航栏，随窗口缩放，Esc 和按钮均可恢复'
 test('站内导航和控制栏重建后仍可切换，离开观看页解除滚动锁定', async t => {
     const page = await openPage(t, '/');
     const button = page.locator('.ytwf-button');
+    assert.ok(await page.locator('.ytp-size-button').isVisible());
     assert.equal(await button.count(), 0);
     await page.evaluate(() => {
         history.pushState(null, '', '/watch?v=1');
@@ -88,4 +90,27 @@ test('站内导航和控制栏重建后仍可切换，离开观看页解除滚�
     await button.waitFor({ state: 'detached' });
     assert.ok(await page.evaluate(() => !document.querySelector('[popover]') &&
         getComputedStyle(document.documentElement).overflow !== 'hidden'));
+});
+
+test('网页全屏占用剧场按钮的位置，提示跟随状态，减少动态效果时跳过动画', async t => {
+    const page = await openPage(t, '/watch?v=1');
+    const button = page.locator('.ytwf-button');
+    const hint = button.locator('.ytwf-hint');
+    assert.equal(await page.locator('.ytwf-button + .ytp-size-button').count(), 1);
+    assert.ok(await page.locator('.ytp-size-button').isHidden());
+    assert.ok(await page.getByRole('button', { name: '全屏', exact: true }).isVisible());
+    await button.hover();
+    await hint.waitFor();
+    assert.equal(await hint.innerText(), '网页全屏');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const toggleAndCountAnimations = () => button.evaluate(el => {
+        el.click();
+        return el.closest('#movie_player').querySelector('.html5-video-container').getAnimations().length;
+    });
+    assert.equal(await toggleAndCountAnimations(), 0);
+    await button.hover();
+    assert.match(await hint.innerText(), /退出网页全屏\s*Esc/);
+    assert.equal(await button.locator('.ytwf-arrow').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    assert.equal(await toggleAndCountAnimations(), 1);
 });
