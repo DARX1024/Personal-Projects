@@ -1,0 +1,23 @@
+// ==UserScript==
+// @name         AADB
+// @version      3.8.0
+// @author       D
+// @include      http*://hentaiverse.org/*
+// @include      http*://alt.hentaiverse.org/*
+// @include      https://e-hentai.org/*
+// @exclude      http*://hentaiverse.org/pages/showequip.php?*
+// @exclude      http*://alt.hentaiverse.org/pages/showequip.php?*
+// @grant        GM_deleteValue
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_notification
+// @grant        GM.xmlHttpRequest
+// @connect      e-hentai.org
+// @connect      hentaiverse.org
+// @connect      alt.hentaiverse.org
+// @connect      hv-monsterdb-data.skk.moe
+// @run-at       document-end
+// @grant        unsafeWindow
+// @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/HentaiVerse/AADB.user.js
+// @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/HentaiVerse/AADB.user.js
+// ==/UserScript==

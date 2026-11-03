@@ -1,0 +1,20 @@
+// ==UserScript==
+// @name         HV 界面增强
+// @namespace    DARX1024.HentaiVerse
+// @version      1.0.0
+// @description  游戏汉化、装备百分比与满锻预览，共享原始数据与动态内容处理
+// @author       mbbdzz, un-hv community; integration by DARX1024
+// @match        *://hentaiverse.org/*
+// @match        *://*.hentaiverse.org/*
+// @match        https://forums.e-hentai.org/*
+// @match        https://reasoningtheory.net/*
+// @connect      hentaiverse.org
+// @connect      alt.hentaiverse.org
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @run-at       document-end
+// @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/HentaiVerse/HV-Interface.user.js
+// @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/HentaiVerse/HV-Interface.user.js
+// ==/UserScript==
