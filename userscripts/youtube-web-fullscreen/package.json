@@ -1,0 +1,10 @@
+{
+  "name": "youtube-web-fullscreen",
+  "private": true,
+  "scripts": {
+    "test": "node --check youtube-web-fullscreen.user.js && node --test"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.55.0"
+  }
+}
