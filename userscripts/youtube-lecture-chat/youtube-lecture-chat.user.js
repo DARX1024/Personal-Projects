@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.0.0
+// @version      1.1.0
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -19,7 +19,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.0.0';
+    const VERSION = '1.1.0';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -27,6 +27,11 @@
     const CONTEXT_AFTER = 5;
     const CAPTION_LOG_LIMIT = 400;
     const KIND_LABEL = { question: '疑问', mark: '重点', note: '想法' };
+    // 拉灯开关：绳子静止长度、最多能拉下的长度、松手时超过多少算拉到底。
+    const CORD_REST = 18;
+    const CORD_MAX_PULL = 14;
+    const CORD_TRIGGER = 8;
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
     // ---- AI 助教接口 ----
     // 接入时实现 reply 并把 enabled 设为 true：参数是刚发出的留言（含 t、text、kind、context）
@@ -113,6 +118,61 @@
         .ytlc-tool[aria-pressed="true"] {
             background: var(--ytlc-fg);
             color: var(--ytlc-bg) !important;
+        }
+        .ytlc-lamp {
+            position: relative;
+            flex: none;
+            align-self: stretch;
+            width: 22px;
+            margin: -10px -4px -10px 0;
+            padding: 0;
+            border: 0;
+            background: none;
+            cursor: grab;
+            touch-action: none;
+        }
+        .ytlc-lamp.ytlc-dragging { cursor: grabbing; }
+        .ytlc-lamp:focus { outline: none; }
+        .ytlc-chain {
+            position: absolute;
+            top: 0;
+            left: calc(50% - 5px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 10px;
+            transform-origin: 50% 0;
+            pointer-events: none;
+        }
+        /* 珠链：竖向重复的小圆点。 */
+        .ytlc-cord {
+            width: 3px;
+            height: ${CORD_REST}px;
+            background: radial-gradient(circle, var(--ytlc-muted) 1.1px, transparent 1.6px) 0 1px / 3px 4px repeat-y;
+            transition: height 160ms cubic-bezier(.2, 0, 0, 1);
+        }
+        .ytlc-lamp:hover .ytlc-cord { height: ${CORD_REST + 2}px; }
+        .ytlc-dragging .ytlc-cord { transition: none; }
+        /* 铜色拉坠；关灯后变成夜光拉坠，微微发亮。 */
+        .ytlc-bead {
+            width: 8px;
+            height: 13px;
+            margin-top: -1px;
+            border-radius: 4px 4px 5px 5px / 4px 4px 8px 8px;
+            background: linear-gradient(90deg, #9c6a24, #f2d48a 45%, #b9842f);
+            box-shadow: 0 1px 2px rgb(0 0 0 / 35%);
+            transition: box-shadow 300ms, background 300ms;
+        }
+        html[dark] .ytlc-bead {
+            background: linear-gradient(90deg, #d8ae58, #fff3cc 45%, #e2ba68);
+            box-shadow: 0 0 7px 1px rgb(255 204 118 / 55%);
+        }
+        .ytlc-lamp:focus-visible .ytlc-bead {
+            outline: 2px solid var(--ytlc-accent);
+            outline-offset: 2px;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .ytlc-cord, .ytlc-bead { transition: none; }
         }
         .ytlc-list {
             flex: 1;
@@ -414,6 +474,9 @@
     const copyButton = h('button', { type: 'button', className: 'ytlc-tool', title: '复制为 Markdown，交给 Agent 总结' }, '复制');
     const relatedButton = h('button', { type: 'button', className: 'ytlc-tool', title: '显示或隐藏推荐视频' }, '推荐');
     const clearButton = h('button', { type: 'button', className: 'ytlc-tool', title: '清空本视频的全部留言' }, '清空');
+    const cord = h('span', { className: 'ytlc-cord' });
+    const chain = h('span', { className: 'ytlc-chain', 'aria-hidden': 'true' }, cord, h('span', { className: 'ytlc-bead' }));
+    const lamp = h('button', { type: 'button', className: 'ytlc-lamp' }, chain);
     const list = h('ol', { className: 'ytlc-list', 'aria-live': 'polite' });
     const anchorButton = h('button', { type: 'button', className: 'ytlc-anchor', hidden: true, title: '点击改为当前播放时间' });
     const input = h('textarea', {
@@ -427,7 +490,7 @@
     const panel = h('section', { className: 'ytlc-panel', 'aria-label': '听课留言板' },
         h('div', { className: 'ytlc-head' },
             h('div', { className: 'ytlc-title' }, '课堂留言', count),
-            copyButton, relatedButton, clearButton),
+            copyButton, relatedButton, clearButton, lamp),
         list,
         h('div', { className: 'ytlc-composer' },
             h('div', { className: 'ytlc-quick' }, quickQuestion, quickMark, anchorButton),
@@ -535,6 +598,115 @@
         render();
     });
 
+    // ---- 拉灯开关：切换整个 YouTube 的深色 / 浅色 ----
+    // YouTube 用 <html dark> 控制深色主题，配色变量都挂在它上面，留言板也跟着变。
+    const root = document.documentElement;
+    const isDark = () => root.hasAttribute('dark');
+
+    function applyTheme() {
+        if (!settings.theme) return;
+        const dark = settings.theme === 'dark';
+        if (isDark() !== dark) root.toggleAttribute('dark', dark);
+        const masthead = document.querySelector('ytd-masthead');
+        if (masthead && masthead.hasAttribute('dark') !== dark) masthead.toggleAttribute('dark', dark);
+    }
+
+    function updateLamp() {
+        const dark = isDark();
+        lamp.setAttribute('aria-label', dark ? '开灯' : '关灯');
+        lamp.title = dark ? '拉一下开灯（浅色）' : '拉一下关灯（深色）';
+    }
+
+    function toggleTheme() {
+        settings.theme = isDark() ? 'light' : 'dark';
+        saveSettings();
+        applyTheme();
+        updateLamp();
+    }
+
+    // 在 YouTube 自己的菜单里换了主题时，以那边为准，脚本不再覆盖。
+    new MutationObserver(() => {
+        if (settings.theme && (settings.theme === 'dark') !== isDark()) {
+            delete settings.theme;
+            saveSettings();
+        }
+        updateLamp();
+    }).observe(root, { attributes: true, attributeFilter: ['dark'] });
+
+    // 松手后绳子回弹，拉坠左右晃几下。
+    function springBack(pull) {
+        cord.style.height = '';
+        if (reducedMotion.matches) return;
+        cord.animate([
+            { height: `${CORD_REST + pull}px` },
+            { height: `${CORD_REST - 2}px`, offset: 0.45 },
+            { height: `${CORD_REST + 1}px`, offset: 0.75 },
+            { height: `${CORD_REST}px` },
+        ], { duration: 420, easing: 'ease-out' });
+        chain.animate([
+            { transform: 'rotate(0)' },
+            { transform: 'rotate(6deg)', offset: 0.25 },
+            { transform: 'rotate(-4deg)', offset: 0.5 },
+            { transform: 'rotate(2deg)', offset: 0.75 },
+            { transform: 'rotate(0)' },
+        ], { duration: 800, easing: 'ease-out' });
+    }
+
+    // 点击或键盘触发：自动往下拉一下，拉到底时切换，再回弹。
+    function pullOnce() {
+        if (reducedMotion.matches) {
+            toggleTheme();
+            return;
+        }
+        const pull = CORD_TRIGGER + 4;
+        cord.animate([{ height: `${CORD_REST}px` }, { height: `${CORD_REST + pull}px` }],
+            { duration: 120, easing: 'cubic-bezier(.3, 0, 1, 1)' })
+            .finished.then(() => {
+                toggleTheme();
+                springBack(pull);
+            });
+    }
+
+    let drag = null;
+    let ignoreClickUntil = 0;
+    lamp.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        drag = { y: event.clientY, pull: 0, moved: false };
+        lamp.setPointerCapture(event.pointerId);
+        lamp.classList.add('ytlc-dragging');
+    });
+    lamp.addEventListener('pointermove', event => {
+        if (!drag) return;
+        const dy = event.clientY - drag.y;
+        if (Math.abs(dy) > 3) drag.moved = true;
+        // 越往下越拉不动，模仿绳子的阻力。
+        drag.pull = Math.min(CORD_MAX_PULL, Math.max(0, dy) * 0.8);
+        cord.style.height = `${CORD_REST + drag.pull}px`;
+    });
+    function endDrag(event) {
+        if (!drag) return;
+        const { pull, moved } = drag;
+        drag = null;
+        lamp.classList.remove('ytlc-dragging');
+        if (!moved) {
+            cord.style.height = '';
+            return;
+        }
+        // 拖动后浏览器还会补一个 click，忽略它，避免切换两次。
+        ignoreClickUntil = performance.now() + 500;
+        if (event.type === 'pointerup' && pull >= CORD_TRIGGER) toggleTheme();
+        springBack(pull);
+    }
+    lamp.addEventListener('pointerup', endDrag);
+    lamp.addEventListener('pointercancel', endDrag);
+    lamp.addEventListener('click', () => {
+        if (performance.now() < ignoreClickUntil) return;
+        pullOnce();
+    });
+
+    applyTheme();
+    updateLamp();
+
     document.addEventListener('keydown', event => {
         if (event.code !== 'Backquote' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
         if (!panel.isConnected || event.target.closest?.('input, textarea, [contenteditable=""], [contenteditable="true"]')) return;
@@ -556,6 +728,7 @@
     // YouTube 站内导航不重载脚本，右栏也可能晚于导航完成才出现。
     const observer = new MutationObserver(mountPanel);
     function syncPage() {
+        applyTheme();
         const id = currentVideoId();
         if (id !== videoId) {
             if (record) saveRecord();

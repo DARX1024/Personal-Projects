@@ -176,3 +176,48 @@ test('反引号键聚焦输入框，输入框内按键不触发 YouTube 快捷�
     assert.ok(await page.evaluate(() => document.activeElement.id === 'movie_player'));
     assert.deepEqual(await page.evaluate(() => window.shortcuts), []);
 });
+
+test('拉灯开关：点击、键盘和下拉超过阈值都切换深浅色，拉得不够不切换，选择刷新后保留', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const dark = () => page.evaluate(() => document.documentElement.hasAttribute('dark'));
+    await page.getByRole('button', { name: '关灯' }).click();
+    await page.waitForFunction(() => document.documentElement.hasAttribute('dark'));
+    const lamp = page.getByRole('button', { name: '开灯' });
+    await lamp.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => !document.documentElement.hasAttribute('dark'));
+
+    const pull = async distance => {
+        const box = await page.locator('.ytlc-lamp').boundingBox();
+        const x = box.x + box.width / 2;
+        await page.mouse.move(x, box.y + 30);
+        await page.mouse.down();
+        await page.mouse.move(x, box.y + 30 + distance, { steps: 5 });
+        await page.mouse.up();
+    };
+    await pull(6);
+    await page.waitForTimeout(200);
+    assert.equal(await dark(), false);
+    await pull(40);
+    assert.equal(await dark(), true);
+    // 拖动后浏览器补发的 click 不会再切换一次。
+    await page.waitForTimeout(300);
+    assert.equal(await dark(), true);
+
+    const reloaded = await openPage(context, '/');
+    assert.ok(await reloaded.evaluate(() => document.documentElement.hasAttribute('dark')));
+});
+
+test('在 YouTube 菜单里换主题后以 YouTube 为准，开关状态同步，减少动态效果时立即切换', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.getByRole('button', { name: '关灯' }).click();
+    assert.ok(await page.evaluate(() => document.documentElement.hasAttribute('dark') &&
+        document.querySelector('.ytlc-cord').getAnimations().length === 0));
+    await page.evaluate(() => document.documentElement.removeAttribute('dark'));
+    await page.getByRole('button', { name: '关灯' }).waitFor();
+    const reloaded = await openPage(context, '/watch?v=abc');
+    assert.equal(await reloaded.evaluate(() => document.documentElement.hasAttribute('dark')), false);
+});
