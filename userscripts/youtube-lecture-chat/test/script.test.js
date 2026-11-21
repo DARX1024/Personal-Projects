@@ -177,16 +177,20 @@ test('反引号键聚焦输入框，输入框内按键不触发 YouTube 快捷�
     assert.deepEqual(await page.evaluate(() => window.shortcuts), []);
 });
 
-test('拉灯开关：点击、键盘和下拉超过阈值都切换深浅色，拉得不够不切换，选择刷新后保留', async t => {
+test('拉灯开关只切换留言板的深浅色：点击、键盘和下拉超过阈值都切换，拉得不够不切换，刷新后保留', async t => {
     const context = await newContext(t);
     const page = await openPage(context, '/watch?v=abc');
-    const dark = () => page.evaluate(() => document.documentElement.hasAttribute('dark'));
+    const theme = () => page.locator('.ytlc-panel').getAttribute('data-theme');
+    const background = () => page.locator('.ytlc-panel').evaluate(el => getComputedStyle(el).backgroundColor);
+    assert.equal(await theme(), 'light');
+    assert.equal(await background(), 'rgb(255, 255, 255)');
     await page.getByRole('button', { name: '关灯' }).click();
-    await page.waitForFunction(() => document.documentElement.hasAttribute('dark'));
-    const lamp = page.getByRole('button', { name: '开灯' });
-    await lamp.focus();
+    await page.waitForFunction(() => document.querySelector('.ytlc-panel').dataset.theme === 'dark');
+    assert.equal(await background(), 'rgb(15, 15, 15)');
+    assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('dark')), false);
+    await page.getByRole('button', { name: '开灯' }).focus();
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => !document.documentElement.hasAttribute('dark'));
+    await page.waitForFunction(() => document.querySelector('.ytlc-panel').dataset.theme === 'light');
 
     const pull = async distance => {
         const box = await page.locator('.ytlc-lamp').boundingBox();
@@ -198,26 +202,31 @@ test('拉灯开关：点击、键盘和下拉超过阈值都切换深浅色，�
     };
     await pull(6);
     await page.waitForTimeout(200);
-    assert.equal(await dark(), false);
+    assert.equal(await theme(), 'light');
     await pull(40);
-    assert.equal(await dark(), true);
+    assert.equal(await theme(), 'dark');
     // 拖动后浏览器补发的 click 不会再切换一次。
     await page.waitForTimeout(300);
-    assert.equal(await dark(), true);
+    assert.equal(await theme(), 'dark');
 
-    const reloaded = await openPage(context, '/');
-    assert.ok(await reloaded.evaluate(() => document.documentElement.hasAttribute('dark')));
+    const reloaded = await openPage(context, '/watch?v=abc');
+    assert.equal(await reloaded.locator('.ytlc-panel').getAttribute('data-theme'), 'dark');
+    assert.equal(await reloaded.evaluate(() => document.documentElement.hasAttribute('dark')), false);
 });
 
-test('在 YouTube 菜单里换主题后以 YouTube 为准，开关状态同步，减少动态效果时立即切换', async t => {
+test('没拉过开关时留言板跟随 YouTube 主题，拉过后保持自己的选择；减少动态效果时立即切换', async t => {
     const context = await newContext(t);
     const page = await openPage(context, '/watch?v=abc');
+    const theme = () => page.locator('.ytlc-panel').getAttribute('data-theme');
+    await page.evaluate(() => document.documentElement.setAttribute('dark', ''));
+    await page.getByRole('button', { name: '开灯' }).waitFor();
+    assert.equal(await theme(), 'dark');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.getByRole('button', { name: '关灯' }).click();
-    assert.ok(await page.evaluate(() => document.documentElement.hasAttribute('dark') &&
-        document.querySelector('.ytlc-cord').getAnimations().length === 0));
+    await page.getByRole('button', { name: '开灯' }).click();
+    assert.equal(await theme(), 'light');
+    assert.equal(await page.locator('.ytlc-cord').evaluate(el => el.getAnimations().length), 0);
+    assert.ok(await page.evaluate(() => document.documentElement.hasAttribute('dark')));
     await page.evaluate(() => document.documentElement.removeAttribute('dark'));
-    await page.getByRole('button', { name: '关灯' }).waitFor();
-    const reloaded = await openPage(context, '/watch?v=abc');
-    assert.equal(await reloaded.evaluate(() => document.documentElement.hasAttribute('dark')), false);
+    await page.evaluate(() => document.documentElement.setAttribute('dark', ''));
+    assert.equal(await theme(), 'light');
 });

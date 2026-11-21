@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.1.0
+// @version      1.2.0
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -19,7 +19,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.1.0';
+    const VERSION = '1.2.0';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -54,13 +54,26 @@
         html.ytlc-hide-related :is(ytd-watch-flexy, ytd-watch-grid) #related {
             display: none !important;
         }
+        /* 留言板有自己的深浅色，与 YouTube 页面主题无关；配色取自 YouTube 的两套主题。 */
+        .ytlc-panel[data-theme="light"] {
+            --ytlc-fg: #0f0f0f;
+            --ytlc-muted: #606060;
+            --ytlc-line: rgb(0 0 0 / 10%);
+            --ytlc-chip: rgb(0 0 0 / 5%);
+            --ytlc-bg: #fff;
+            --ytlc-accent: #065fd4;
+            color-scheme: light;
+        }
+        .ytlc-panel[data-theme="dark"] {
+            --ytlc-fg: #f1f1f1;
+            --ytlc-muted: #aaa;
+            --ytlc-line: rgb(255 255 255 / 20%);
+            --ytlc-chip: rgb(255 255 255 / 10%);
+            --ytlc-bg: #0f0f0f;
+            --ytlc-accent: #3ea6ff;
+            color-scheme: dark;
+        }
         .ytlc-panel {
-            --ytlc-fg: var(--yt-spec-text-primary, #0f0f0f);
-            --ytlc-muted: var(--yt-spec-text-secondary, #606060);
-            --ytlc-line: var(--yt-spec-10-percent-layer, rgb(0 0 0 / 10%));
-            --ytlc-chip: var(--yt-spec-badge-chip-background, rgb(0 0 0 / 5%));
-            --ytlc-bg: var(--yt-spec-base-background, #fff);
-            --ytlc-accent: var(--yt-spec-call-to-action, #065fd4);
             display: flex;
             flex-direction: column;
             box-sizing: border-box;
@@ -163,7 +176,7 @@
             box-shadow: 0 1px 2px rgb(0 0 0 / 35%);
             transition: box-shadow 300ms, background 300ms;
         }
-        html[dark] .ytlc-bead {
+        .ytlc-panel[data-theme="dark"] .ytlc-bead {
             background: linear-gradient(90deg, #d8ae58, #fff3cc 45%, #e2ba68);
             box-shadow: 0 0 7px 1px rgb(255 204 118 / 55%);
         }
@@ -279,6 +292,7 @@
             resize: none;
             field-sizing: content;
         }
+        .ytlc-input::placeholder { color: var(--ytlc-muted); }
         .ytlc-input:focus {
             outline: none;
             border-color: var(--ytlc-accent);
@@ -598,40 +612,30 @@
         render();
     });
 
-    // ---- 拉灯开关：切换整个 YouTube 的深色 / 浅色 ----
-    // YouTube 用 <html dark> 控制深色主题，配色变量都挂在它上面，留言板也跟着变。
-    const root = document.documentElement;
-    const isDark = () => root.hasAttribute('dark');
+    // ---- 拉灯开关：切换留言板自己的深色 / 浅色 ----
+    // 没拉过时跟随 YouTube 页面主题（<html dark>）；拉过之后留言板用自己的选择，不再跟随。
+    delete settings.theme; // 1.1.0 曾用这个键切换整个 YouTube 主题，已废弃。
+    const youtubeDark = () => document.documentElement.hasAttribute('dark');
 
-    function applyTheme() {
-        if (!settings.theme) return;
-        const dark = settings.theme === 'dark';
-        if (isDark() !== dark) root.toggleAttribute('dark', dark);
-        const masthead = document.querySelector('ytd-masthead');
-        if (masthead && masthead.hasAttribute('dark') !== dark) masthead.toggleAttribute('dark', dark);
+    function panelTheme() {
+        return settings.panelTheme || (youtubeDark() ? 'dark' : 'light');
     }
 
-    function updateLamp() {
-        const dark = isDark();
-        lamp.setAttribute('aria-label', dark ? '开灯' : '关灯');
-        lamp.title = dark ? '拉一下开灯（浅色）' : '拉一下关灯（深色）';
+    function applyPanelTheme() {
+        const theme = panelTheme();
+        panel.dataset.theme = theme;
+        lamp.setAttribute('aria-label', theme === 'dark' ? '开灯' : '关灯');
+        lamp.title = theme === 'dark' ? '拉一下切换为浅色留言板' : '拉一下切换为深色留言板';
     }
 
     function toggleTheme() {
-        settings.theme = isDark() ? 'light' : 'dark';
+        settings.panelTheme = panelTheme() === 'dark' ? 'light' : 'dark';
         saveSettings();
-        applyTheme();
-        updateLamp();
+        applyPanelTheme();
     }
 
-    // 在 YouTube 自己的菜单里换了主题时，以那边为准，脚本不再覆盖。
-    new MutationObserver(() => {
-        if (settings.theme && (settings.theme === 'dark') !== isDark()) {
-            delete settings.theme;
-            saveSettings();
-        }
-        updateLamp();
-    }).observe(root, { attributes: true, attributeFilter: ['dark'] });
+    new MutationObserver(applyPanelTheme)
+        .observe(document.documentElement, { attributes: true, attributeFilter: ['dark'] });
 
     // 松手后绳子回弹，拉坠左右晃几下。
     function springBack(pull) {
@@ -704,8 +708,7 @@
         pullOnce();
     });
 
-    applyTheme();
-    updateLamp();
+    applyPanelTheme();
 
     document.addEventListener('keydown', event => {
         if (event.code !== 'Backquote' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
@@ -728,7 +731,6 @@
     // YouTube 站内导航不重载脚本，右栏也可能晚于导航完成才出现。
     const observer = new MutationObserver(mountPanel);
     function syncPage() {
-        applyTheme();
         const id = currentVideoId();
         if (id !== videoId) {
             if (record) saveRecord();
