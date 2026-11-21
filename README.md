@@ -10,6 +10,7 @@
 | [`userscripts/eh-torrent-downloader`](userscripts/eh-torrent-downloader) | EH / EX 种子择优下载、原档下载、批量与去重；nhentai 导出中文 ComicInfo.xml |
 | [`userscripts/universal-math-latex-copier`](userscripts/universal-math-latex-copier) | 双击网页公式复制 LaTeX，支持 KaTeX、MathJax、MathML 等 |
 | [`userscripts/youtube-web-fullscreen`](userscripts/youtube-web-fullscreen) | 在 YouTube 播放器上切换网页全屏，保留浏览器标签栏和地址栏 |
+| [`userscripts/youtube-lecture-chat`](userscripts/youtube-lecture-chat) | 用自己的听课留言板替换 YouTube 推荐视频，记录疑问、时间戳与字幕，课后复制给 Agent 总结 |
 | [`userscripts/HentaiVerse`](userscripts/HentaiVerse) | HV 界面增强、AADB、PonySolver 与 HV Utils，统一维护源码、安装文件和测试 |
 
 各项目的安装、运行和测试方法见对应目录的 README。

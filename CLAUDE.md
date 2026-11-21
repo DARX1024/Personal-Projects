@@ -36,3 +36,10 @@
 - 按适配器顺序识别公式（KaTeX → MathJax 3 → MathJax 2 → Wikipedia → MathML → 知乎 → 通用兜底），先命中先用；新增网站支持时加适配器，注意顺序。
 - 兜底逻辑只能在确认是公式时拦截双击，不能影响普通文字、代码块和可编辑区的选词。
 - 测试：`cd userscripts/universal-math-latex-copier && npm install && npm test`。测试在 jsdom 页面里运行整个脚本并模拟双击，不需要导出函数。
+
+### userscripts/youtube-lecture-chat
+
+- Tampermonkey 脚本，主文件 `youtube-lecture-chat.user.js`，只在 YouTube 观看页显示面板。
+- 留言按视频分别存在 `GM_setValue('video:<id>')`，设置存在 `settings`；改存储结构时保持对旧数据的兼容。
+- AI 助教接口是脚本内的 `teacher` 对象，API key 只能从本机配置读取，不能写进仓库。
+- 测试：`cd userscripts/youtube-lecture-chat && npm install && npm test`（Playwright + 本机 Chrome，或用 `CHROME_PATH` 指定浏览器）。
