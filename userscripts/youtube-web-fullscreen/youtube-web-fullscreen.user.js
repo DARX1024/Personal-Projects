@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YouTube 网页全屏
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.1.0
-// @description  让 YouTube 播放器占满当前标签页，按 Esc 回到原来的观看布局。
+// @version      1.2.0
+// @description  让 YouTube 播放器占满当前标签页，按 Esc 回到原来的观看布局；控制栏加一个 1.25 倍速快捷按钮。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
 // @noframes
@@ -15,7 +15,8 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.1.0';
+    const VERSION = '1.2.0';
+    const FAST_RATE = 1.25;
     const watchPlayer = ':is(ytd-watch-flexy, ytd-watch-grid):not([hidden]) ytd-player #movie_player';
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
     let activeHost = null;
@@ -41,9 +42,33 @@
         ${watchPlayer}:has(.ytwf-button) .ytp-size-button {
             display: none !important;
         }
-        #movie_player .ytp-button.ytwf-button {
+        #movie_player .ytp-button:is(.ytwf-button, .ytwf-speed) {
             position: relative;
             overflow: visible;
+        }
+        #movie_player .ytp-button.ytwf-speed {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            vertical-align: top;
+            font: 600 13px/1 "YouTube Noto", Roboto, Arial, sans-serif;
+            color: inherit;
+        }
+        /* 与字幕按钮一致：开启时下方出现红色短条。 */
+        #movie_player .ytp-button.ytwf-speed::after {
+            content: "";
+            position: absolute;
+            left: 50%;
+            bottom: 20%;
+            width: 0;
+            height: 3px;
+            border-radius: 3px;
+            background: #f00;
+            transform: translateX(-50%);
+            transition: width 250ms cubic-bezier(0, 0, .2, 1);
+        }
+        #movie_player .ytp-button.ytwf-speed[aria-pressed="true"]::after {
+            width: 50%;
         }
         .ytwf-button svg :is(rect, path) {
             fill: none;
@@ -84,7 +109,7 @@
             transform: translate(-50%, 3px);
             transition: opacity 160ms ease-out, transform 160ms ease-out, visibility 160ms;
         }
-        .ytwf-button:is(:hover, :focus-visible) .ytwf-hint {
+        :is(.ytwf-button, .ytwf-speed):is(:hover, :focus-visible) .ytwf-hint {
             visibility: visible;
             opacity: 1;
             transform: translate(-50%, 0);
@@ -100,7 +125,7 @@
             display: none;
         }
         @media (prefers-reduced-motion: reduce) {
-            .ytwf-arrow, .ytwf-hint { transition: none; }
+            .ytwf-arrow, .ytwf-hint, #movie_player .ytp-button.ytwf-speed::after { transition: none; }
         }
         :fullscreen .ytwf-button {
             display: none !important;
@@ -138,6 +163,46 @@
     key.textContent = 'Esc';
     hint.append(hintText, key);
     button.append(icon, hint);
+
+    const speedButton = document.createElement('button');
+    speedButton.type = 'button';
+    speedButton.className = 'ytp-button ytwf-speed';
+    speedButton.setAttribute('aria-label', `${FAST_RATE} 倍速`);
+    speedButton.setAttribute('aria-pressed', 'false');
+    const speedLabel = document.createElement('span');
+    speedLabel.setAttribute('aria-hidden', 'true');
+    speedLabel.textContent = `${FAST_RATE}×`;
+    const speedHint = document.createElement('span');
+    speedHint.className = 'ytwf-hint';
+    speedHint.setAttribute('aria-hidden', 'true');
+    speedButton.append(speedLabel, speedHint);
+
+    function speedVideo() {
+        return speedButton.closest('#movie_player')?.querySelector('video');
+    }
+
+    function syncSpeed() {
+        const fast = speedVideo()?.playbackRate === FAST_RATE;
+        speedButton.setAttribute('aria-pressed', String(fast));
+        speedHint.textContent = fast ? '恢复 1 倍速' : `${FAST_RATE} 倍速`;
+    }
+
+    // 已是 1.25 倍速时恢复 1 倍速，其他速度一律切到 1.25 倍速。
+    speedButton.addEventListener('click', () => {
+        const movie = speedButton.closest('#movie_player');
+        const video = speedVideo();
+        if (!video) return;
+        const rate = video.playbackRate === FAST_RATE ? 1 : FAST_RATE;
+        // 优先走播放器接口，让设置菜单里的速度同步；脚本沙盒拿不到接口时直接改 video。
+        const player = movie.wrappedJSObject || movie;
+        if (typeof player.setPlaybackRate === 'function') player.setPlaybackRate(rate);
+        if (video.playbackRate !== rate) video.playbackRate = rate;
+        syncSpeed();
+    });
+    // ratechange 不冒泡，在捕获阶段统一监听，设置菜单和快捷键改速时也能同步按钮状态。
+    document.addEventListener('ratechange', event => {
+        if (event.target === speedVideo()) syncSpeed();
+    }, true);
 
     function setWebFullscreen(host) {
         if (host === activeHost) return;
@@ -182,8 +247,19 @@
 
     function mountButton() {
         if (activeHost && !activeHost.matches(':popover-open')) setWebFullscreen(null);
-        if (button.isConnected) return;
-        document.querySelector(`${watchPlayer} :is(.ytp-size-button, .ytp-fullscreen-button)`)?.before(button);
+        if (!button.isConnected) {
+            document.querySelector(`${watchPlayer} :is(.ytp-size-button, .ytp-fullscreen-button)`)?.before(button);
+        }
+        if (!speedButton.isConnected) {
+            // 放在「自动播放」开关左侧；找不到开关时退到字幕或设置按钮左侧。
+            const anchor = ['[data-tooltip-target-id="ytp-autonav-toggle-button"]',
+                '.ytp-button:has(> .ytp-autonav-toggle-button-container)',
+                '.ytp-subtitles-button', '.ytp-settings-button']
+                .map(selector => document.querySelector(`${watchPlayer} ${selector}`))
+                .find(Boolean);
+            anchor?.before(speedButton);
+            if (speedButton.isConnected) syncSpeed();
+        }
     }
 
     // YouTube 站内导航不会重载脚本，控制栏也可能晚于导航完成才出现。
@@ -193,9 +269,11 @@
         if (location.pathname !== '/watch') {
             setWebFullscreen(null);
             button.remove();
+            speedButton.remove();
             return;
         }
         mountButton();
+        syncSpeed();
         observer.observe(document.body, { childList: true, subtree: true });
     }
 

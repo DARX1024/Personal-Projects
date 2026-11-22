@@ -11,7 +11,7 @@ after(async () => { await browser?.close(); });
 
 const player = `<ytd-player><div id="movie_player" tabindex="0">
     <div class="html5-video-container"><video></video></div>
-    <div class="ytp-right-controls"><button class="ytp-size-button">剧场模式</button><button class="ytp-fullscreen-button">全屏</button></div>
+    <div class="ytp-right-controls"><button class="ytp-button" data-tooltip-target-id="ytp-autonav-toggle-button" aria-label="自动播放"><div class="ytp-autonav-toggle-button-container"></div></button><button class="ytp-button ytp-subtitles-button">字幕</button><button class="ytp-size-button">剧场模式</button><button class="ytp-fullscreen-button">全屏</button></div>
 </div></ytd-player>`;
 
 async function openPage(t, pathname) {
@@ -113,4 +113,52 @@ test('网页全屏占用剧场按钮的位置，提示跟随状态，减少动�
     assert.equal(await button.locator('.ytwf-arrow').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     assert.equal(await toggleAndCountAnimations(), 1);
+});
+
+test('1.25 倍速按钮位于自动播放左侧，切换速度并与外部改速同步', async t => {
+    const page = await openPage(t, '/watch?v=1');
+    const speed = page.getByRole('button', { name: '1.25 倍速' });
+    const hint = speed.locator('.ytwf-hint');
+    const rate = () => page.evaluate(() => document.querySelector('video').playbackRate);
+    assert.equal(await page.locator('.ytwf-speed + [data-tooltip-target-id="ytp-autonav-toggle-button"]').count(), 1);
+    assert.equal(await speed.innerText(), '1.25×');
+    await speed.hover();
+    await hint.waitFor();
+    assert.equal(await hint.innerText(), '1.25 倍速');
+    await speed.click();
+    assert.equal(await rate(), 1.25);
+    assert.equal(await speed.getAttribute('aria-pressed'), 'true');
+    assert.equal(await hint.innerText(), '恢复 1 倍速');
+    await speed.click();
+    assert.equal(await rate(), 1);
+    assert.equal(await speed.getAttribute('aria-pressed'), 'false');
+    // 模拟设置菜单改速：其他速度下按钮不亮，点一下切到 1.25 倍速。
+    await page.evaluate(() => { document.querySelector('video').playbackRate = 1.25; });
+    await page.waitForFunction(() => document.querySelector('.ytwf-speed').getAttribute('aria-pressed') === 'true');
+    await page.evaluate(() => { document.querySelector('video').playbackRate = 2; });
+    await page.waitForFunction(() => document.querySelector('.ytwf-speed').getAttribute('aria-pressed') === 'false');
+    await speed.click();
+    assert.equal(await rate(), 1.25);
+});
+
+test('倍速按钮优先调用播放器接口，控制栏重建后回到自动播放左侧', async t => {
+    const page = await openPage(t, '/watch?v=1');
+    await page.evaluate(() => {
+        const movie = document.querySelector('#movie_player');
+        window.apiRates = [];
+        movie.setPlaybackRate = rate => {
+            window.apiRates.push(rate);
+            movie.querySelector('video').playbackRate = rate;
+        };
+    });
+    await page.locator('.ytwf-speed').click();
+    assert.deepEqual(await page.evaluate(() => window.apiRates), [1.25]);
+    await page.evaluate(() => {
+        const controls = document.querySelector('.ytp-right-controls');
+        controls.replaceChildren(...[...controls.children]
+            .filter(el => !el.matches('.ytwf-speed, .ytwf-button')).map(el => el.cloneNode(true)));
+    });
+    await page.locator('.ytwf-speed + [data-tooltip-target-id="ytp-autonav-toggle-button"]').waitFor();
+    assert.equal(await page.locator('.ytwf-speed').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('.ytwf-button + .ytp-size-button').count(), 1);
 });
