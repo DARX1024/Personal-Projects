@@ -122,6 +122,9 @@ test('1.25 倍速按钮位于自动播放左侧，切换速度并与外部改速
     const rate = () => page.evaluate(() => document.querySelector('video').playbackRate);
     assert.equal(await page.locator('.ytwf-speed + [data-tooltip-target-id="ytp-autonav-toggle-button"]').count(), 1);
     assert.equal(await speed.innerText(), '1.25×');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const background = () => speed.evaluate(el => getComputedStyle(el).backgroundColor);
+    const normalBackground = await background();
     await speed.hover();
     await hint.waitFor();
     assert.equal(await hint.innerText(), '1.25 倍速');
@@ -129,9 +132,11 @@ test('1.25 倍速按钮位于自动播放左侧，切换速度并与外部改速
     assert.equal(await rate(), 1.25);
     assert.equal(await speed.getAttribute('aria-pressed'), 'true');
     assert.equal(await hint.innerText(), '恢复 1 倍速');
+    assert.equal(await background(), 'rgba(0, 0, 0, 0.55)');
     await speed.click();
     assert.equal(await rate(), 1);
     assert.equal(await speed.getAttribute('aria-pressed'), 'false');
+    assert.equal(await background(), normalBackground);
     // 模拟设置菜单改速：其他速度下按钮不亮，点一下切到 1.25 倍速。
     await page.evaluate(() => { document.querySelector('video').playbackRate = 1.25; });
     await page.waitForFunction(() => document.querySelector('.ytwf-speed').getAttribute('aria-pressed') === 'true');

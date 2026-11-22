@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 网页全屏
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.2.0
+// @version      1.2.1
 // @description  让 YouTube 播放器占满当前标签页，按 Esc 回到原来的观看布局；控制栏加一个 1.25 倍速快捷按钮。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -15,7 +15,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.2.0';
+    const VERSION = '1.2.1';
     const FAST_RATE = 1.25;
     const watchPlayer = ':is(ytd-watch-flexy, ytd-watch-grid):not([hidden]) ytd-player #movie_player';
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -53,6 +53,12 @@
             vertical-align: top;
             font: 600 13px/1 "YouTube Noto", Roboto, Arial, sans-serif;
             color: inherit;
+            border-radius: 999px;
+            transition: background-color 160ms ease-out;
+        }
+        /* 开启 1.25 倍速时整个按钮压上一层深色底，悬停时也保持。 */
+        #movie_player .ytp-button.ytwf-speed[aria-pressed="true"] {
+            background-color: rgb(0 0 0 / 55%);
         }
         /* 与字幕按钮一致：开启时下方出现红色短条。 */
         #movie_player .ytp-button.ytwf-speed::after {
@@ -125,7 +131,8 @@
             display: none;
         }
         @media (prefers-reduced-motion: reduce) {
-            .ytwf-arrow, .ytwf-hint, #movie_player .ytp-button.ytwf-speed::after { transition: none; }
+            .ytwf-arrow, .ytwf-hint, #movie_player .ytp-button.ytwf-speed,
+            #movie_player .ytp-button.ytwf-speed::after { transition: none; }
         }
         :fullscreen .ytwf-button {
             display: none !important;
