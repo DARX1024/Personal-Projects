@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 网页全屏
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.2.1
+// @version      1.2.2
 // @description  让 YouTube 播放器占满当前标签页，按 Esc 回到原来的观看布局；控制栏加一个 1.25 倍速快捷按钮。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -15,7 +15,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.2.1';
+    const VERSION = '1.2.2';
     const FAST_RATE = 1.25;
     const watchPlayer = ':is(ytd-watch-flexy, ytd-watch-grid):not([hidden]) ytd-player #movie_player';
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -51,30 +51,38 @@
             align-items: center;
             justify-content: center;
             vertical-align: top;
-            font: 600 13px/1 "YouTube Noto", Roboto, Arial, sans-serif;
+            width: auto;
+            min-width: 48px;
+            padding: 0 4px;
             color: inherit;
-            border-radius: 999px;
-            transition: background-color 160ms ease-out;
         }
-        /* 开启 1.25 倍速时整个按钮压上一层深色底，悬停时也保持。 */
-        #movie_player .ytp-button.ytwf-speed[aria-pressed="true"] {
-            background-color: rgb(0 0 0 / 55%);
-        }
-        /* 与字幕按钮一致：开启时下方出现红色短条。 */
+        /* 不显示 YouTube 给 aria-pressed 按钮加的红色短条，状态只由胶囊表达。 */
         #movie_player .ytp-button.ytwf-speed::after {
-            content: "";
-            position: absolute;
-            left: 50%;
-            bottom: 20%;
-            width: 0;
-            height: 3px;
-            border-radius: 3px;
-            background: #f00;
-            transform: translateX(-50%);
-            transition: width 250ms cubic-bezier(0, 0, .2, 1);
+            display: none !important;
         }
-        #movie_player .ytp-button.ytwf-speed[aria-pressed="true"]::after {
-            width: 50%;
+        /* 关闭时是白色描边胶囊，与网页全屏图标的线框一致；开启时填成深色。 */
+        .ytwf-speed-chip {
+            display: inline-flex;
+            align-items: center;
+            height: 24px;
+            padding: 0 8px;
+            box-sizing: border-box;
+            border: 2px solid rgb(255 255 255 / 85%);
+            border-radius: 12px;
+            font: 600 12.5px/1 "YouTube Noto", Roboto, Arial, sans-serif;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: .2px;
+            transition: background-color 160ms ease-out, border-color 160ms ease-out;
+        }
+        .ytwf-speed:is(:hover, :focus-visible) .ytwf-speed-chip {
+            background-color: rgb(255 255 255 / 16%);
+        }
+        .ytwf-speed[aria-pressed="true"] .ytwf-speed-chip {
+            border-color: transparent;
+            background-color: rgb(15 15 15 / 72%);
+        }
+        .ytwf-speed[aria-pressed="true"]:is(:hover, :focus-visible) .ytwf-speed-chip {
+            background-color: rgb(15 15 15 / 85%);
         }
         .ytwf-button svg :is(rect, path) {
             fill: none;
@@ -131,8 +139,7 @@
             display: none;
         }
         @media (prefers-reduced-motion: reduce) {
-            .ytwf-arrow, .ytwf-hint, #movie_player .ytp-button.ytwf-speed,
-            #movie_player .ytp-button.ytwf-speed::after { transition: none; }
+            .ytwf-arrow, .ytwf-hint, .ytwf-speed-chip { transition: none; }
         }
         :fullscreen .ytwf-button {
             display: none !important;
@@ -177,6 +184,7 @@
     speedButton.setAttribute('aria-label', `${FAST_RATE} 倍速`);
     speedButton.setAttribute('aria-pressed', 'false');
     const speedLabel = document.createElement('span');
+    speedLabel.className = 'ytwf-speed-chip';
     speedLabel.setAttribute('aria-hidden', 'true');
     speedLabel.textContent = `${FAST_RATE}×`;
     const speedHint = document.createElement('span');
