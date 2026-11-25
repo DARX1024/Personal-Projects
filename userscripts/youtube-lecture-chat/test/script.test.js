@@ -48,6 +48,7 @@ async function openPage(context, pathname) {
         window.GM_setValue = (key, value) => localStorage.setItem('gm:' + key, JSON.stringify(value));
         window.GM_deleteValue = key => localStorage.removeItem('gm:' + key);
         window.GM_setClipboard = text => { window.clipboard = text; };
+        window.GM_getResourceURL = () => 'data:font/woff2;base64,';
         // 无片源的 video 无法播放，用可写属性模拟播放进度。
         const video = document.querySelector('video');
         let time = 0;
@@ -229,4 +230,86 @@ test('没拉过开关时留言板跟随 YouTube 主题，拉过后保持自己�
     await page.evaluate(() => document.documentElement.removeAttribute('dark'));
     await page.evaluate(() => document.documentElement.setAttribute('dark', ''));
     assert.equal(await theme(), 'light');
+});
+
+test('右下角的皮肤选单向上弹出，可用键盘选择，选中后立即换皮肤并在刷新后保留', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const panel = page.locator('.ytlc-panel');
+    const toggle = page.getByRole('button', { name: '更换皮肤' });
+    const menu = page.getByRole('menu', { name: '皮肤' });
+    assert.equal(await panel.getAttribute('data-skin'), 'default');
+    // 默认皮肤不加载像素字体。
+    assert.equal(await page.evaluate(() => [...document.styleSheets].some(sheet =>
+        [...sheet.cssRules].some(rule => rule.cssText.startsWith('@font-face')))), false);
+
+    await toggle.click();
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    const menuBox = await menu.boundingBox();
+    const toggleBox = await toggle.boundingBox();
+    assert.ok(menuBox.y + menuBox.height <= toggleBox.y, '选单在按钮上方');
+    assert.ok(Math.abs(menuBox.x + menuBox.width - (toggleBox.x + toggleBox.width)) < 2, '选单与按钮右对齐');
+    assert.deepEqual(await page.getByRole('menuitemradio').evaluateAll(items => items.map(item => item.dataset.skin)),
+        ['default', 'rpg', 'night', 'paper']);
+    assert.ok(await page.getByRole('menuitemradio', { name: /简洁/ }).evaluate(el => el === document.activeElement));
+
+    await page.evaluate(() => {
+        window.shortcuts = [];
+        document.addEventListener('keydown', event => window.shortcuts.push(event.key));
+    });
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Enter');
+    assert.equal(await panel.getAttribute('data-skin'), 'rpg');
+    assert.ok(await menu.isHidden());
+    assert.ok(await toggle.evaluate(el => el === document.activeElement));
+    assert.deepEqual(await page.evaluate(() => window.shortcuts), [], '方向键不交给 YouTube');
+    assert.match(await panel.evaluate(el => getComputedStyle(el).fontFamily), /YTLC Pixel/);
+    assert.equal(await page.locator('.ytlc-bead svg.ytlc-sprite').count(), 1);
+
+    await toggle.click();
+    assert.equal(await page.getByRole('menuitemradio', { name: /RPG/ }).getAttribute('aria-checked'), 'true');
+    await page.keyboard.press('Escape');
+    assert.ok(await menu.isHidden());
+    await toggle.click();
+    await page.locator('.ytlc-list').click();
+    assert.ok(await menu.isHidden());
+
+    await toggle.click();
+    await page.getByRole('menuitemradio', { name: /方格笔记本/ }).click();
+    const reloaded = await openPage(context, '/watch?v=abc');
+    assert.equal(await reloaded.locator('.ytlc-panel').getAttribute('data-skin'), 'paper');
+    assert.ok(await reloaded.locator('.ytlc-panel').evaluate(el => el.classList.contains('ytlc-pixel')));
+});
+
+test('像素吊坠随拉灯换成发光配色，三款皮肤的深浅色都有各自的背景', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const panel = page.locator('.ytlc-panel');
+    const backgrounds = new Set();
+    for (const name of [/RPG/, /月夜自习/, /方格笔记本/]) {
+        await page.getByRole('button', { name: '更换皮肤' }).click();
+        await page.getByRole('menuitemradio', { name }).click();
+        for (let i = 0; i < 2; i++) {
+            const fills = await page.locator('.ytlc-bead rect').evaluateAll(rects => rects.map(r => r.getAttribute('fill')).join());
+            backgrounds.add(await panel.evaluate(el => getComputedStyle(el).backgroundColor));
+            await page.emulateMedia({ reducedMotion: 'reduce' });
+            await page.locator('.ytlc-lamp').click();
+            assert.notEqual(await page.locator('.ytlc-bead rect').evaluateAll(rects => rects.map(r => r.getAttribute('fill')).join()), fills);
+        }
+    }
+    assert.equal(backgrounds.size, 6);
+});
+
+test('像素皮肤用标签显示疑问和重点，「重点」快捷标记不重复显示文字', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    await page.getByRole('button', { name: '⭐ 重点' }).click();
+    const words = page.locator('.ytlc-note .ytlc-words');
+    assert.ok(await words.isVisible());
+    await page.getByRole('button', { name: '更换皮肤' }).click();
+    await page.getByRole('menuitemradio', { name: /月夜自习/ }).click();
+    assert.ok(await words.isHidden());
+    assert.equal(await page.locator('.ytlc-note .ytlc-text').evaluate(el => getComputedStyle(el, '::before').content), '"重点"');
 });

@@ -42,4 +42,7 @@
 - Tampermonkey 脚本，主文件 `youtube-lecture-chat.user.js`，只在 YouTube 观看页显示面板。
 - 留言按视频分别存在 `GM_setValue('video:<id>')`，设置存在 `settings`；改存储结构时保持对旧数据的兼容。
 - AI 助教接口是脚本内的 `teacher` 对象，API key 只能从本机配置读取，不能写进仓库。
+- 皮肤在 `SKINS` 中定义，像素吊坠在 `SPRITES` 中逐像素描述；配色按 `.ytlc-panel[data-skin][data-theme]` 写 CSS 变量，每款皮肤都要有深浅两套。
+- 像素字体通过 `@resource pixelFont` 引入（Fusion Pixel，OFL-1.1），升级字体时同步改 `@resource` 与 `PIXEL_FONT_URL`。
+- YouTube 启用了 Trusted Types：不要用 `innerHTML` 写入字符串，用 `createElement` / `createElementNS` 构建节点。
 - 测试：`cd userscripts/youtube-lecture-chat && npm install && npm test`（Playwright + 本机 Chrome，或用 `CHROME_PATH` 指定浏览器）。

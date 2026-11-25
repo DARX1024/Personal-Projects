@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.2.0
+// @version      1.3.0
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -11,6 +11,8 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
+// @grant        GM_getResourceURL
+// @resource     pixelFont https://cdn.jsdelivr.net/npm/@fontsource/fusion-pixel-12px-proportional-sc@5.3.0/files/fusion-pixel-12px-proportional-sc-latin-400-normal.woff2
 // @run-at       document-end
 // @downloadURL  https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/youtube-lecture-chat/youtube-lecture-chat.user.js
 // @updateURL    https://raw.githubusercontent.com/DARX1024/Personal-Projects/main/userscripts/youtube-lecture-chat/youtube-lecture-chat.user.js
@@ -19,7 +21,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.2.0';
+    const VERSION = '1.3.0';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -32,6 +34,35 @@
     const CORD_MAX_PULL = 14;
     const CORD_TRIGGER = 8;
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+    // ---- 皮肤 ----
+    // 像素吊坠：每个字符是一个像素，. 为透明；off 是浅色留言板时的样子，on 是深色时（发光）。
+    const SPRITES = {
+        potion: {
+            grid: ['...ccc...', '...kkk...', '....k....', '...kkk...', '..kRRRk..', '.kRhRRRk.', '.kRRRRRk.', '.kRRRRRk.', '..kkkkk..'],
+            off: { c: '#8a6a4a', k: '#7f98a3', R: '#b23a4e', h: '#e6e6e6' },
+            on: { c: '#b07a3a', k: '#bfeaff', R: '#ff2d55', h: '#ffffff' },
+        },
+        star: {
+            grid: ['....y....', '...yyy...', 'yyyyhyyyy', '.yyyhyyy.', '..yyyyy..', '..yyyyy..', '.yyy.yyy.', '.yy...yy.'],
+            off: { y: '#c9a227', h: '#efd98a' },
+            on: { y: '#ffd23f', h: '#fff6c0' },
+        },
+        bulb: {
+            grid: ['...ccc...', '..cdddc..', '..cdddc..', '..cdddc..', '...ccc...', '..oyyyo..', '.oyyhyyo.',
+                'oyyyhyyyo', 'oyyyyyyyo', 'oyyyyyyyo', '.oyyyyyo.', '..ooooo..'],
+            off: { c: '#55555e', d: '#8a8a94', o: '#8a7a50', y: '#e3dab4', h: '#f6f1de' },
+            on: { c: '#55555e', d: '#8a8a94', o: '#d08a10', y: '#ffd84a', h: '#fffbe0' },
+        },
+    };
+    const SKINS = [
+        { id: 'default', name: '简洁', sub: '铜色拉坠' },
+        { id: 'rpg', name: 'RPG 对话框', sub: '血瓶吊坠', sprite: 'potion' },
+        { id: 'night', name: '月夜自习', sub: '星星吊坠', sprite: 'star' },
+        { id: 'paper', name: '方格笔记本', sub: '台灯吊坠', sprite: 'bulb' },
+    ];
+    // 像素字体 Fusion Pixel（OFL-1.1），按 12px 的整数倍显示才清晰。
+    const PIXEL_FONT_URL = 'https://cdn.jsdelivr.net/npm/@fontsource/fusion-pixel-12px-proportional-sc@5.3.0/files/fusion-pixel-12px-proportional-sc-latin-400-normal.woff2';
 
     // ---- AI 助教接口 ----
     // 接入时实现 reply 并把 enabled 设为 true：参数是刚发出的留言（含 t、text、kind、context）
@@ -176,7 +207,7 @@
             box-shadow: 0 1px 2px rgb(0 0 0 / 35%);
             transition: box-shadow 300ms, background 300ms;
         }
-        .ytlc-panel[data-theme="dark"] .ytlc-bead {
+        .ytlc-panel:not(.ytlc-pixel)[data-theme="dark"] .ytlc-bead {
             background: linear-gradient(90deg, #d8ae58, #fff3cc 45%, #e2ba68);
             box-shadow: 0 0 7px 1px rgb(255 204 118 / 55%);
         }
@@ -297,8 +328,15 @@
             outline: none;
             border-color: var(--ytlc-accent);
         }
-        .ytlc-hint {
+        .ytlc-foot {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             margin-top: 6px;
+        }
+        .ytlc-hint {
+            flex: 1;
+            min-width: 0;
             color: var(--ytlc-muted);
             font-size: 12px;
         }
@@ -307,6 +345,259 @@
             border: 1px solid var(--ytlc-line);
             border-radius: 4px;
             font: inherit;
+        }
+        /* ---- 皮肤选单 ---- */
+        .ytlc-skin { position: relative; flex: none; }
+        .ytlc-skin-toggle {
+            padding: 2px 8px;
+            border: 0;
+            border-radius: 4px;
+            background: none;
+            color: var(--ytlc-muted) !important;
+            font-size: 12px !important;
+        }
+        .ytlc-skin-toggle:hover, .ytlc-skin-toggle[aria-expanded="true"] {
+            background: var(--ytlc-chip);
+            color: var(--ytlc-fg) !important;
+        }
+        .ytlc-skin-menu {
+            position: absolute;
+            right: 0;
+            bottom: calc(100% + 8px);
+            z-index: 3;
+            width: 216px;
+            padding: 6px;
+            border: 1px solid var(--ytlc-line);
+            border-radius: 10px;
+            background: var(--ytlc-bg);
+            box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+            transform-origin: 100% 100%;
+            animation: ytlc-menu-up 140ms cubic-bezier(.2, 0, 0, 1);
+        }
+        .ytlc-skin-menu[hidden] { display: none; }
+        @keyframes ytlc-menu-up {
+            from { opacity: 0; transform: translateY(6px); }
+        }
+        .ytlc-skin-heading {
+            padding: 4px 8px 6px;
+            color: var(--ytlc-muted);
+            font-size: 12px;
+        }
+        .ytlc-skin-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 6px 8px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            text-align: left;
+        }
+        .ytlc-skin-item:is(:hover, :focus-visible) {
+            outline: none;
+            background: var(--ytlc-chip);
+        }
+        .ytlc-skin-name { flex: 1; min-width: 0; }
+        .ytlc-skin-name small {
+            display: block;
+            color: var(--ytlc-muted);
+            font-size: 12px;
+            line-height: 16px;
+        }
+        .ytlc-skin-item:not([data-skin="default"]) .ytlc-skin-name {
+            font-family: "YTLC Pixel", monospace;
+            font-size: 12px;
+            line-height: 16px;
+        }
+        .ytlc-skin-check { width: 14px; color: var(--ytlc-accent); visibility: hidden; }
+        .ytlc-skin-item[aria-checked="true"] .ytlc-skin-check { visibility: visible; }
+        /* 色卡：固定展示每款皮肤的招牌配色，和当前深浅色无关。 */
+        .ytlc-swatch {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: none;
+            width: 36px;
+            height: 30px;
+            border-radius: 4px;
+            box-shadow: inset 0 0 0 1px rgb(128 128 128 / 35%);
+        }
+        .ytlc-swatch[data-skin="default"] { background: linear-gradient(135deg, #fff 50%, #0f0f0f 50%); }
+        .ytlc-swatch[data-skin="default"]::after {
+            content: "";
+            width: 8px;
+            height: 13px;
+            border-radius: 4px 4px 5px 5px / 4px 4px 8px 8px;
+            background: linear-gradient(90deg, #9c6a24, #f2d48a 45%, #b9842f);
+        }
+        .ytlc-swatch[data-skin="rpg"] { border-radius: 0; background: #10102a; box-shadow: inset 0 0 0 2px #10102a, inset 0 0 0 4px #f4f4f4; }
+        .ytlc-swatch[data-skin="night"] {
+            border-radius: 0;
+            background: radial-gradient(circle, #fff 0 1px, transparent 1.5px) 3px 4px / 13px 11px, #1b1d3a;
+        }
+        .ytlc-swatch[data-skin="paper"] {
+            border-radius: 0;
+            background: linear-gradient(#e2d6bb 1px, transparent 1px) 0 0 / 6px 6px,
+                linear-gradient(90deg, #e2d6bb 1px, transparent 1px) 0 0 / 6px 6px, #f4ecd8;
+        }
+        .ytlc-sprite { display: block; }
+        @media (prefers-reduced-motion: reduce) {
+            .ytlc-skin-menu { animation: none; }
+        }
+
+        /* ---- 像素皮肤：共用骨架 ---- */
+        .ytlc-panel.ytlc-pixel {
+            width: auto;
+            margin: 4px 4px 24px;
+            border: 0;
+            border-radius: 0;
+            background-color: var(--ytlc-bg);
+            font: 12px/18px "YTLC Pixel", monospace;
+            -webkit-font-smoothing: none;
+            box-shadow: 0 -4px 0 0 var(--ytlc-frame), 0 4px 0 0 var(--ytlc-frame),
+                -4px 0 0 0 var(--ytlc-frame), 4px 0 0 0 var(--ytlc-frame), 8px 8px 0 0 rgb(0 0 0 / 28%);
+            scrollbar-color: var(--ytlc-muted) transparent;
+        }
+        .ytlc-pixel button, .ytlc-pixel .ytlc-input { font-family: "YTLC Pixel", monospace !important; }
+        .ytlc-pixel .ytlc-head { border-bottom: 4px solid var(--ytlc-line); }
+        .ytlc-pixel .ytlc-title { font-size: 24px; line-height: 24px; font-weight: 400; }
+        .ytlc-pixel .ytlc-count { font-size: 12px; }
+        .ytlc-pixel :is(.ytlc-tool, .ytlc-quick button:not(.ytlc-anchor)) {
+            height: auto;
+            margin: 2px;
+            padding: 6px 7px 7px;
+            border-radius: 0;
+            background: var(--ytlc-chip);
+            color: var(--ytlc-fg) !important;
+            font-size: 12px !important;
+            line-height: 12px;
+            box-shadow: inset -2px -3px 0 0 var(--ytlc-shade), 0 0 0 2px var(--ytlc-frame);
+        }
+        .ytlc-pixel :is(.ytlc-tool, .ytlc-quick button:not(.ytlc-anchor)):hover { background: var(--ytlc-hl); }
+        .ytlc-pixel :is(.ytlc-tool, .ytlc-quick button:not(.ytlc-anchor)):active {
+            box-shadow: inset 2px 3px 0 0 var(--ytlc-shade), 0 0 0 2px var(--ytlc-frame);
+        }
+        .ytlc-pixel .ytlc-tool[aria-pressed="true"] { background: var(--ytlc-fg); color: var(--ytlc-bg) !important; }
+        .ytlc-pixel .ytlc-note:hover, .ytlc-pixel .ytlc-note.ytlc-flash { background: var(--ytlc-hl); }
+        .ytlc-pixel .ytlc-time { font-size: 12px !important; }
+        .ytlc-pixel .ytlc-note[data-kind] .ytlc-text::before {
+            display: inline-block;
+            margin-right: 5px;
+            padding: 2px 3px;
+            color: var(--ytlc-tag-fg);
+            font-size: 12px;
+            line-height: 12px;
+        }
+        .ytlc-pixel .ytlc-note[data-kind="question"] .ytlc-text::before { content: "疑问"; background: var(--ytlc-tq); }
+        .ytlc-pixel .ytlc-note[data-kind="mark"] .ytlc-text::before { content: "重点"; background: var(--ytlc-tm); }
+        .ytlc-pixel .ytlc-note[data-kind="note"] .ytlc-text::before { display: none; }
+        .ytlc-pixel .ytlc-label-only .ytlc-words { display: none; }
+        .ytlc-pixel .ytlc-context { font-size: 12px; line-height: 18px; }
+        .ytlc-pixel .ytlc-reply { border-left-width: 4px; border-radius: 0; background: var(--ytlc-hl); }
+        .ytlc-pixel .ytlc-delete { border-radius: 0; }
+        .ytlc-pixel .ytlc-composer { border-top: 4px solid var(--ytlc-line); }
+        .ytlc-pixel .ytlc-input {
+            width: calc(100% - 4px);
+            margin: 2px;
+            border: 0;
+            border-radius: 0;
+            background: var(--ytlc-input);
+            font-size: 12px !important;
+            line-height: 18px;
+            box-shadow: 0 0 0 2px var(--ytlc-frame), inset 2px 2px 0 0 var(--ytlc-shade);
+        }
+        .ytlc-pixel .ytlc-input:focus { box-shadow: 0 0 0 2px var(--ytlc-accent), inset 2px 2px 0 0 var(--ytlc-shade); }
+        .ytlc-pixel .ytlc-anchor { padding: 0 4px; border-radius: 0; background: none; font-size: 12px !important; }
+        .ytlc-pixel .ytlc-hint kbd { border-radius: 0; }
+        .ytlc-pixel :is(.ytlc-skin-toggle, .ytlc-skin-item) { border-radius: 0; }
+        .ytlc-pixel .ytlc-skin-menu {
+            border: 0;
+            border-radius: 0;
+            box-shadow: 0 0 0 2px var(--ytlc-frame), 6px 6px 0 0 rgb(0 0 0 / 30%);
+            animation-timing-function: steps(3);
+        }
+        /* 像素珠链和像素吊坠 */
+        .ytlc-pixel .ytlc-cord {
+            width: 2px;
+            background: linear-gradient(var(--ytlc-muted) 50%, transparent 50%) 0 0 / 2px 4px repeat-y;
+        }
+        .ytlc-pixel .ytlc-bead {
+            width: auto;
+            height: auto;
+            margin-top: 0;
+            border-radius: 0;
+            background: none;
+            box-shadow: none;
+        }
+        .ytlc-pixel[data-theme="dark"] .ytlc-bead .ytlc-sprite {
+            filter: drop-shadow(0 0 4px var(--ytlc-glow)) drop-shadow(0 0 2px var(--ytlc-glow));
+        }
+
+        /* ---- 像素皮肤：配色 ---- */
+        .ytlc-panel[data-skin="rpg"] {
+            --ytlc-glow: #ff2d55;
+            margin: 10px 10px 30px;
+        }
+        .ytlc-panel[data-skin="rpg"][data-theme="dark"] {
+            --ytlc-bg: #10102a; --ytlc-fg: #f4f4f4; --ytlc-muted: #8c8cb4; --ytlc-frame: #f4f4f4;
+            --ytlc-line: #2c2c5a; --ytlc-chip: #10102a; --ytlc-shade: #2c2c5a; --ytlc-hl: #1e1e46;
+            --ytlc-accent: #ffd23f; --ytlc-tq: #e8344a; --ytlc-tm: #ffd23f; --ytlc-tag-fg: #10102a; --ytlc-input: #060616;
+            color-scheme: dark;
+        }
+        .ytlc-panel[data-skin="rpg"][data-theme="light"] {
+            --ytlc-bg: #f8f8f0; --ytlc-fg: #10102a; --ytlc-muted: #6a6a8c; --ytlc-frame: #10102a;
+            --ytlc-line: #dcdce8; --ytlc-chip: #f8f8f0; --ytlc-shade: #c8c8d8; --ytlc-hl: #ececf4;
+            --ytlc-accent: #b0262f; --ytlc-tq: #e8344a; --ytlc-tm: #e2a400; --ytlc-tag-fg: #fff; --ytlc-input: #fff;
+        }
+        /* RPG 对话框：内外两圈的双线边框 */
+        .ytlc-panel.ytlc-pixel[data-skin="rpg"] {
+            box-shadow: 0 0 0 4px var(--ytlc-bg), 0 0 0 8px var(--ytlc-frame), 0 0 0 10px var(--ytlc-bg),
+                10px 10px 0 0 rgb(0 0 0 / 28%);
+        }
+        .ytlc-panel[data-skin="rpg"] .ytlc-quick button:not(.ytlc-anchor)::before {
+            content: "▶";
+            margin-right: 3px;
+            color: var(--ytlc-accent);
+        }
+        .ytlc-panel[data-skin="night"] {
+            --ytlc-glow: #ffd23f;
+            background-image: radial-gradient(circle, var(--ytlc-star) 0 1px, transparent 1.5px),
+                radial-gradient(circle, var(--ytlc-star2) 0 1px, transparent 1.5px);
+            background-size: 97px 83px, 131px 113px;
+            background-position: 13px 21px, 61px 47px;
+        }
+        .ytlc-panel[data-skin="night"][data-theme="dark"] {
+            --ytlc-bg: #1b1d3a; --ytlc-fg: #e8e6ff; --ytlc-muted: #8a8bc0; --ytlc-frame: #0c0d22;
+            --ytlc-line: #2b2e5c; --ytlc-chip: #2b2e5c; --ytlc-shade: #14163a; --ytlc-hl: #25284f;
+            --ytlc-accent: #f7d774; --ytlc-tq: #c96bd8; --ytlc-tm: #f7d774; --ytlc-tag-fg: #1b1d3a; --ytlc-input: #14163a;
+            --ytlc-star: rgb(255 255 255 / 55%); --ytlc-star2: rgb(247 215 116 / 60%);
+            color-scheme: dark;
+        }
+        .ytlc-panel[data-skin="night"][data-theme="light"] {
+            --ytlc-bg: #eef0fb; --ytlc-fg: #24264a; --ytlc-muted: #6e70a0; --ytlc-frame: #24264a;
+            --ytlc-line: #d6d9f0; --ytlc-chip: #fff; --ytlc-shade: #c9cdee; --ytlc-hl: #e1e4f7;
+            --ytlc-accent: #6a4fc8; --ytlc-tq: #b04fc8; --ytlc-tm: #d89a00; --ytlc-tag-fg: #fff; --ytlc-input: #fff;
+            --ytlc-star: #b9bde8; --ytlc-star2: #e8c86a;
+        }
+        .ytlc-panel[data-skin="paper"] {
+            --ytlc-glow: #ffcc33;
+            background-image: linear-gradient(var(--ytlc-grid) 1px, transparent 1px),
+                linear-gradient(90deg, var(--ytlc-grid) 1px, transparent 1px);
+            background-size: 12px 12px;
+        }
+        .ytlc-panel[data-skin="paper"][data-theme="light"] {
+            --ytlc-bg: #f4ecd8; --ytlc-fg: #3b2f2f; --ytlc-muted: #9a8a72; --ytlc-frame: #3b2f2f;
+            --ytlc-line: #e2d6bb; --ytlc-chip: #fffaf0; --ytlc-shade: #d9ccb0; --ytlc-hl: #ebe0c6;
+            --ytlc-accent: #c0392b; --ytlc-tq: #c0392b; --ytlc-tm: #e2a400; --ytlc-tag-fg: #fffaf0; --ytlc-input: #fffaf0;
+            --ytlc-grid: #e6dcc4;
+        }
+        .ytlc-panel[data-skin="paper"][data-theme="dark"] {
+            --ytlc-bg: #2b2622; --ytlc-fg: #efe6d2; --ytlc-muted: #a39478; --ytlc-frame: #120f0d;
+            --ytlc-line: #3d362f; --ytlc-chip: #3d362f; --ytlc-shade: #1e1a17; --ytlc-hl: #362f29;
+            --ytlc-accent: #ff7a66; --ytlc-tq: #e0533f; --ytlc-tm: #e2a400; --ytlc-tag-fg: #2b2622; --ytlc-input: #221e1b;
+            --ytlc-grid: #342e28;
+            color-scheme: dark;
         }
     `);
 
@@ -319,6 +610,29 @@
         }
         el.append(...children);
         return el;
+    }
+
+    function makeSprite(name, state, px) {
+        const sprite = SPRITES[name];
+        const palette = sprite[state];
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        const width = sprite.grid[0].length;
+        const height = sprite.grid.length;
+        svg.setAttribute('class', 'ytlc-sprite');
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.setAttribute('width', String(width * px));
+        svg.setAttribute('height', String(height * px));
+        svg.setAttribute('shape-rendering', 'crispEdges');
+        sprite.grid.forEach((row, y) => [...row].forEach((ch, x) => {
+            if (!palette[ch]) return;
+            const rect = document.createElementNS(ns, 'rect');
+            for (const [key, value] of Object.entries({ x, y, width: 1, height: 1, fill: palette[ch] })) {
+                rect.setAttribute(key, String(value));
+            }
+            svg.append(rect);
+        }));
+        return svg;
     }
 
     // ---- 播放器与页面信息 ----
@@ -489,7 +803,8 @@
     const relatedButton = h('button', { type: 'button', className: 'ytlc-tool', title: '显示或隐藏推荐视频' }, '推荐');
     const clearButton = h('button', { type: 'button', className: 'ytlc-tool', title: '清空本视频的全部留言' }, '清空');
     const cord = h('span', { className: 'ytlc-cord' });
-    const chain = h('span', { className: 'ytlc-chain', 'aria-hidden': 'true' }, cord, h('span', { className: 'ytlc-bead' }));
+    const bead = h('span', { className: 'ytlc-bead' });
+    const chain = h('span', { className: 'ytlc-chain', 'aria-hidden': 'true' }, cord, bead);
     const lamp = h('button', { type: 'button', className: 'ytlc-lamp' }, chain);
     const list = h('ol', { className: 'ytlc-list', 'aria-live': 'polite' });
     const anchorButton = h('button', { type: 'button', className: 'ytlc-anchor', hidden: true, title: '点击改为当前播放时间' });
@@ -501,6 +816,28 @@
     });
     const quickQuestion = h('button', { type: 'button', title: '在当前时间记一个「没听懂」' }, '？没懂');
     const quickMark = h('button', { type: 'button', title: '在当前时间标记重点' }, '⭐ 重点');
+    const skinToggle = h('button', {
+        type: 'button',
+        className: 'ytlc-skin-toggle',
+        'aria-haspopup': 'menu',
+        'aria-expanded': 'false',
+        'aria-label': '更换皮肤',
+        title: '更换皮肤',
+    }, '皮肤 ▴');
+    const skinItems = SKINS.map(skin => h('button', {
+        type: 'button',
+        className: 'ytlc-skin-item',
+        role: 'menuitemradio',
+        'aria-checked': 'false',
+        'data-skin': skin.id,
+        tabIndex: -1,
+    },
+    h('span', { className: 'ytlc-swatch', 'data-skin': skin.id, 'aria-hidden': 'true' },
+        ...(skin.sprite ? [makeSprite(skin.sprite, 'on', 2)] : [])),
+    h('span', { className: 'ytlc-skin-name' }, skin.name, h('small', {}, skin.sub)),
+    h('span', { className: 'ytlc-skin-check', 'aria-hidden': 'true' }, '✓')));
+    const skinMenu = h('div', { className: 'ytlc-skin-menu', role: 'menu', 'aria-label': '皮肤', hidden: true },
+        h('div', { className: 'ytlc-skin-heading', 'aria-hidden': 'true' }, '选择皮肤'), ...skinItems);
     const panel = h('section', { className: 'ytlc-panel', 'aria-label': '听课留言板' },
         h('div', { className: 'ytlc-head' },
             h('div', { className: 'ytlc-title' }, '课堂留言', count),
@@ -509,8 +846,10 @@
         h('div', { className: 'ytlc-composer' },
             h('div', { className: 'ytlc-quick' }, quickQuestion, quickMark, anchorButton),
             input,
-            h('div', { className: 'ytlc-hint' },
-                h('kbd', {}, 'Enter'), ' 发送 · ', h('kbd', {}, 'Shift+Enter'), ' 换行 · ', h('kbd', {}, '`'), ' 随时聚焦')));
+            h('div', { className: 'ytlc-foot' },
+                h('div', { className: 'ytlc-hint' },
+                    h('kbd', {}, 'Enter'), ' 发送 · ', h('kbd', {}, 'Shift+Enter'), ' 换行 · ', h('kbd', {}, '`'), ' 聚焦'),
+                h('div', { className: 'ytlc-skin' }, skinMenu, skinToggle))));
 
     function render(flashId) {
         count.textContent = record?.notes.length ? String(record.notes.length) : '';
@@ -522,14 +861,16 @@
         }
         let flashed = null;
         list.replaceChildren(...record.notes.map(note => {
-            const body = h('div', { className: 'ytlc-body' }, h('div', { className: 'ytlc-text' }, note.text));
+            const body = h('div', { className: 'ytlc-body' },
+                h('div', { className: 'ytlc-text' }, h('span', { className: 'ytlc-words' }, note.text)));
             if (note.context?.length) {
                 body.append(h('div', { className: 'ytlc-context', title: note.context.join('\n') },
                     '字幕：' + note.context.at(-1)));
             }
             for (const reply of note.replies || []) body.append(h('div', { className: 'ytlc-reply' }, reply.text));
             if (pending.has(note.id)) body.append(h('div', { className: 'ytlc-reply' }, '助教思考中…'));
-            const item = h('li', { className: 'ytlc-note', 'data-kind': note.kind },
+            const labelOnly = note.kind === 'mark' && note.text === KIND_LABEL.mark;
+            const item = h('li', { className: labelOnly ? 'ytlc-note ytlc-label-only' : 'ytlc-note', 'data-kind': note.kind },
                 h('button', {
                     type: 'button',
                     className: 'ytlc-time',
@@ -621,9 +962,32 @@
         return settings.panelTheme || (youtubeDark() ? 'dark' : 'light');
     }
 
+    let pixelFontLoaded = false;
+    function loadPixelFont() {
+        if (pixelFontLoaded) return;
+        pixelFontLoaded = true;
+        let url = '';
+        try { url = GM_getResourceURL('pixelFont'); } catch { /* 没有 @resource 时直接从 CDN 读取 */ }
+        GM_addStyle(`@font-face {
+            font-family: "YTLC Pixel";
+            src: url("${url || PIXEL_FONT_URL}") format("woff2");
+            font-display: swap;
+        }`);
+    }
+
+    function currentSkin() {
+        return SKINS.find(skin => skin.id === settings.skin) || SKINS[0];
+    }
+
     function applyPanelTheme() {
         const theme = panelTheme();
+        const skin = currentSkin();
+        if (skin.sprite) loadPixelFont();
         panel.dataset.theme = theme;
+        panel.dataset.skin = skin.id;
+        panel.classList.toggle('ytlc-pixel', Boolean(skin.sprite));
+        bead.replaceChildren(...(skin.sprite ? [makeSprite(skin.sprite, theme === 'dark' ? 'on' : 'off', 2)] : []));
+        for (const item of skinItems) item.setAttribute('aria-checked', String(item.dataset.skin === skin.id));
         lamp.setAttribute('aria-label', theme === 'dark' ? '开灯' : '关灯');
         lamp.title = theme === 'dark' ? '拉一下切换为浅色留言板' : '拉一下切换为深色留言板';
     }
@@ -707,6 +1071,52 @@
         if (performance.now() < ignoreClickUntil) return;
         pullOnce();
     });
+
+    // ---- 皮肤选单：右下角向上弹出 ----
+    function openSkinMenu() {
+        loadPixelFont();
+        skinMenu.hidden = false;
+        skinToggle.setAttribute('aria-expanded', 'true');
+        (skinItems.find(item => item.getAttribute('aria-checked') === 'true') || skinItems[0]).focus();
+    }
+
+    function closeSkinMenu(refocus) {
+        if (skinMenu.hidden) return;
+        skinMenu.hidden = true;
+        skinToggle.setAttribute('aria-expanded', 'false');
+        if (refocus) skinToggle.focus();
+    }
+
+    skinToggle.addEventListener('click', () => {
+        if (skinMenu.hidden) openSkinMenu();
+        else closeSkinMenu(false);
+    });
+    for (const item of skinItems) {
+        item.addEventListener('click', () => {
+            settings.skin = item.dataset.skin;
+            saveSettings();
+            applyPanelTheme();
+            closeSkinMenu(true);
+        });
+    }
+    skinMenu.addEventListener('keydown', event => {
+        const index = skinItems.indexOf(document.activeElement);
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            const step = event.key === 'ArrowDown' ? 1 : -1;
+            skinItems[(index + step + skinItems.length) % skinItems.length].focus();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            closeSkinMenu(true);
+        } else if (event.key === 'Tab') {
+            closeSkinMenu(false);
+        }
+    });
+    document.addEventListener('pointerdown', event => {
+        if (!skinMenu.hidden && !event.target.closest?.('.ytlc-skin')) closeSkinMenu(false);
+    }, true);
+    // 面板里的按键不交给 YouTube：方向键、空格、k/j/l 等在这里不应控制播放器。
+    panel.addEventListener('keydown', event => event.stopPropagation());
 
     applyPanelTheme();
 
