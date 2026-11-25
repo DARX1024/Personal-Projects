@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.4.0
+// @version      1.4.1
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -21,7 +21,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.4.0';
+    const VERSION = '1.4.1';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -36,7 +36,7 @@
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
     // ---- 皮肤 ----
-    // 像素吊坠：每个字符是一个像素，. 为透明；off 是浅色留言板时的样子，on 是深色时（发光）。
+    // 像素吊坠：每个字符是一个像素，. 为透明；on 是点亮（发光）的样子，off 是熄灭的样子。
     const SPRITES = {
         potion: {
             grid: ['...ccc...', '...kkk...', '....k....', '...kkk...', '..kRRRk..', '.kRhRRRk.', '.kRRRRRk.', '.kRRRRRk.', '..kkkkk..'],
@@ -51,7 +51,7 @@
         bulb: {
             grid: ['...ccc...', '..cdddc..', '..cdddc..', '..cdddc..', '...ccc...', '..oyyyo..', '.oyyhyyo.',
                 'oyyyhyyyo', 'oyyyyyyyo', 'oyyyyyyyo', '.oyyyyyo.', '..ooooo..'],
-            off: { c: '#55555e', d: '#8a8a94', o: '#8a7a50', y: '#e3dab4', h: '#f6f1de' },
+            off: { c: '#4a4a52', d: '#77777f', o: '#6e6650', y: '#a89f80', h: '#c9c0a0' },
             on: { c: '#55555e', d: '#8a8a94', o: '#d08a10', y: '#ffd84a', h: '#fffbe0' },
         },
     };
@@ -59,7 +59,8 @@
         { id: 'default', name: '简洁', sub: '铜色拉坠' },
         { id: 'rpg', name: 'RPG 对话框', sub: '血瓶吊坠', sprite: 'potion' },
         { id: 'night', name: '月夜自习', sub: '星星吊坠', sprite: 'star' },
-        { id: 'paper', name: '方格笔记本', sub: '台灯吊坠', sprite: 'bulb' },
+        // 台灯开着时纸面是亮的，所以浅色时点亮、深色时熄灭；血瓶和星星则在暗处发光。
+        { id: 'paper', name: '方格笔记本', sub: '台灯吊坠', sprite: 'bulb', litWhen: 'light' },
     ];
     // 像素字体 Fusion Pixel（OFL-1.1），按 12px 的整数倍显示才清晰。
     const PIXEL_FONT_URL = 'https://cdn.jsdelivr.net/npm/@fontsource/fusion-pixel-12px-proportional-sc@5.3.0/files/fusion-pixel-12px-proportional-sc-latin-400-normal.woff2';
@@ -535,7 +536,7 @@
             background: none;
             box-shadow: none;
         }
-        .ytlc-pixel[data-theme="dark"] .ytlc-bead .ytlc-sprite {
+        .ytlc-pixel .ytlc-bead.ytlc-lit .ytlc-sprite {
             filter: drop-shadow(0 0 4px var(--ytlc-glow)) drop-shadow(0 0 2px var(--ytlc-glow));
         }
 
@@ -1031,7 +1032,9 @@
         panel.dataset.theme = theme;
         panel.dataset.skin = skin.id;
         panel.classList.toggle('ytlc-pixel', Boolean(skin.sprite));
-        bead.replaceChildren(...(skin.sprite ? [makeSprite(skin.sprite, theme === 'dark' ? 'on' : 'off', 2)] : []));
+        const lit = Boolean(skin.sprite) && theme === (skin.litWhen || 'dark');
+        bead.classList.toggle('ytlc-lit', lit);
+        bead.replaceChildren(...(skin.sprite ? [makeSprite(skin.sprite, lit ? 'on' : 'off', 2)] : []));
         for (const item of skinItems) item.setAttribute('aria-checked', String(item.dataset.skin === skin.id));
         lamp.setAttribute('aria-label', theme === 'dark' ? '开灯' : '关灯');
         lamp.title = theme === 'dark' ? '拉一下切换为浅色留言板' : '拉一下切换为深色留言板';

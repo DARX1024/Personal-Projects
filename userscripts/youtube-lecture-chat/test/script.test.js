@@ -374,3 +374,20 @@ test('「💡 想法」先在当前时间占位，接着输入的文字补进这
     assert.ok(await page.locator('.ytlc-words', { hasText: /^想法$/ }).isHidden());
     assert.equal(await notes.nth(1).locator('.ytlc-text').evaluate(el => getComputedStyle(el, '::before').content), '"想法"');
 });
+
+test('台灯吊坠浅色时点亮、深色时熄灭，血瓶和星星深色时发光', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const lit = () => page.locator('.ytlc-bead').evaluate(el => el.classList.contains('ytlc-lit') &&
+        getComputedStyle(el.querySelector('.ytlc-sprite')).filter !== 'none');
+    const expected = { RPG: [false, true], 月夜自习: [false, true], 方格笔记本: [true, false] };
+    for (const [name, [inLight, inDark]] of Object.entries(expected)) {
+        await page.getByRole('button', { name: '更换皮肤' }).click();
+        await page.getByRole('menuitemradio', { name: new RegExp(name) }).click();
+        if (await page.locator('.ytlc-panel').getAttribute('data-theme') === 'dark') await page.locator('.ytlc-lamp').click();
+        assert.equal(await lit(), inLight, `${name} 浅色`);
+        await page.locator('.ytlc-lamp').click();
+        assert.equal(await lit(), inDark, `${name} 深色`);
+    }
+});
