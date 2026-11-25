@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.3.0
+// @version      1.4.0
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -21,7 +21,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.3.0';
+    const VERSION = '1.4.0';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -259,6 +259,7 @@
         }
         .ytlc-note[data-kind="question"] .ytlc-text::before { content: "❓ "; }
         .ytlc-note[data-kind="mark"] .ytlc-text::before { content: "⭐ "; }
+        .ytlc-note[data-kind="note"] .ytlc-text::before { content: "💡 "; }
         .ytlc-context {
             margin-top: 2px;
             color: var(--ytlc-muted);
@@ -491,7 +492,11 @@
         }
         .ytlc-pixel .ytlc-note[data-kind="question"] .ytlc-text::before { content: "疑问"; background: var(--ytlc-tq); }
         .ytlc-pixel .ytlc-note[data-kind="mark"] .ytlc-text::before { content: "重点"; background: var(--ytlc-tm); }
-        .ytlc-pixel .ytlc-note[data-kind="note"] .ytlc-text::before { display: none; }
+        .ytlc-pixel .ytlc-note[data-kind="note"] .ytlc-text::before {
+            content: "想法";
+            background: var(--ytlc-tn);
+            color: var(--ytlc-tn-fg);
+        }
         .ytlc-pixel .ytlc-label-only .ytlc-words { display: none; }
         .ytlc-pixel .ytlc-context { font-size: 12px; line-height: 18px; }
         .ytlc-pixel .ytlc-reply { border-left-width: 4px; border-radius: 0; background: var(--ytlc-hl); }
@@ -543,12 +548,14 @@
             --ytlc-bg: #10102a; --ytlc-fg: #f4f4f4; --ytlc-muted: #8c8cb4; --ytlc-frame: #f4f4f4;
             --ytlc-line: #2c2c5a; --ytlc-chip: #10102a; --ytlc-shade: #2c2c5a; --ytlc-hl: #1e1e46;
             --ytlc-accent: #ffd23f; --ytlc-tq: #e8344a; --ytlc-tm: #ffd23f; --ytlc-tag-fg: #10102a; --ytlc-input: #060616;
+            --ytlc-tn: #3a7bd5; --ytlc-tn-fg: #f4f4f4;
             color-scheme: dark;
         }
         .ytlc-panel[data-skin="rpg"][data-theme="light"] {
             --ytlc-bg: #f8f8f0; --ytlc-fg: #10102a; --ytlc-muted: #6a6a8c; --ytlc-frame: #10102a;
             --ytlc-line: #dcdce8; --ytlc-chip: #f8f8f0; --ytlc-shade: #c8c8d8; --ytlc-hl: #ececf4;
             --ytlc-accent: #b0262f; --ytlc-tq: #e8344a; --ytlc-tm: #e2a400; --ytlc-tag-fg: #fff; --ytlc-input: #fff;
+            --ytlc-tn: #2f6fcf; --ytlc-tn-fg: #fff;
         }
         /* RPG 对话框：内外两圈的双线边框 */
         .ytlc-panel.ytlc-pixel[data-skin="rpg"] {
@@ -571,6 +578,7 @@
             --ytlc-bg: #1b1d3a; --ytlc-fg: #e8e6ff; --ytlc-muted: #8a8bc0; --ytlc-frame: #0c0d22;
             --ytlc-line: #2b2e5c; --ytlc-chip: #2b2e5c; --ytlc-shade: #14163a; --ytlc-hl: #25284f;
             --ytlc-accent: #f7d774; --ytlc-tq: #c96bd8; --ytlc-tm: #f7d774; --ytlc-tag-fg: #1b1d3a; --ytlc-input: #14163a;
+            --ytlc-tn: #5ec2c8; --ytlc-tn-fg: #1b1d3a;
             --ytlc-star: rgb(255 255 255 / 55%); --ytlc-star2: rgb(247 215 116 / 60%);
             color-scheme: dark;
         }
@@ -578,6 +586,7 @@
             --ytlc-bg: #eef0fb; --ytlc-fg: #24264a; --ytlc-muted: #6e70a0; --ytlc-frame: #24264a;
             --ytlc-line: #d6d9f0; --ytlc-chip: #fff; --ytlc-shade: #c9cdee; --ytlc-hl: #e1e4f7;
             --ytlc-accent: #6a4fc8; --ytlc-tq: #b04fc8; --ytlc-tm: #d89a00; --ytlc-tag-fg: #fff; --ytlc-input: #fff;
+            --ytlc-tn: #2f9aa0; --ytlc-tn-fg: #fff;
             --ytlc-star: #b9bde8; --ytlc-star2: #e8c86a;
         }
         .ytlc-panel[data-skin="paper"] {
@@ -590,12 +599,14 @@
             --ytlc-bg: #f4ecd8; --ytlc-fg: #3b2f2f; --ytlc-muted: #9a8a72; --ytlc-frame: #3b2f2f;
             --ytlc-line: #e2d6bb; --ytlc-chip: #fffaf0; --ytlc-shade: #d9ccb0; --ytlc-hl: #ebe0c6;
             --ytlc-accent: #c0392b; --ytlc-tq: #c0392b; --ytlc-tm: #e2a400; --ytlc-tag-fg: #fffaf0; --ytlc-input: #fffaf0;
+            --ytlc-tn: #5b8c5a; --ytlc-tn-fg: #fffaf0;
             --ytlc-grid: #e6dcc4;
         }
         .ytlc-panel[data-skin="paper"][data-theme="dark"] {
             --ytlc-bg: #2b2622; --ytlc-fg: #efe6d2; --ytlc-muted: #a39478; --ytlc-frame: #120f0d;
             --ytlc-line: #3d362f; --ytlc-chip: #3d362f; --ytlc-shade: #1e1a17; --ytlc-hl: #362f29;
             --ytlc-accent: #ff7a66; --ytlc-tq: #e0533f; --ytlc-tm: #e2a400; --ytlc-tag-fg: #2b2622; --ytlc-input: #221e1b;
+            --ytlc-tn: #6fae6d; --ytlc-tn-fg: #2b2622;
             --ytlc-grid: #342e28;
             color-scheme: dark;
         }
@@ -717,8 +728,9 @@
     }
 
     // ---- 留言 ----
+    // 以问号结尾的是疑问，其余都是想法（内部仍记作 note，兼容旧数据）。
     function inferKind(text) {
-        return /^[?？]|[?？]\s*$/.test(text) ? 'question' : 'note';
+        return /[?？]\s*$/.test(text) ? 'question' : 'note';
     }
 
     function addNote(text, t, kind = inferKind(text)) {
@@ -737,6 +749,7 @@
         saveRecord();
         render(note.id);
         askTeacher(note);
+        return note;
     }
 
     async function askTeacher(note) {
@@ -761,8 +774,14 @@
         }
     }
 
+    // 正在补写的占位留言被删掉时，草稿留着，改回普通的时间锚点。
+    function releaseFilling() {
+        if (filling && !record?.notes.includes(filling)) setAnchor(input.value.trim() ? anchor : null);
+    }
+
     function deleteNote(id) {
         record.notes = record.notes.filter(note => note.id !== id);
+        releaseFilling();
         saveRecord();
         render();
     }
@@ -815,6 +834,7 @@
         'aria-label': '发送留言',
     });
     const quickQuestion = h('button', { type: 'button', title: '在当前时间记一个「没听懂」' }, '？没懂');
+    const quickIdea = h('button', { type: 'button', title: '先在当前时间占个位，再慢慢写想法' }, '💡 想法');
     const quickMark = h('button', { type: 'button', title: '在当前时间标记重点' }, '⭐ 重点');
     const skinToggle = h('button', {
         type: 'button',
@@ -844,7 +864,7 @@
             copyButton, relatedButton, clearButton, lamp),
         list,
         h('div', { className: 'ytlc-composer' },
-            h('div', { className: 'ytlc-quick' }, quickQuestion, quickMark, anchorButton),
+            h('div', { className: 'ytlc-quick' }, quickQuestion, quickIdea, quickMark, anchorButton),
             input,
             h('div', { className: 'ytlc-foot' },
                 h('div', { className: 'ytlc-hint' },
@@ -856,7 +876,7 @@
         relatedButton.setAttribute('aria-pressed', String(settings.showRelated));
         if (!record?.notes.length) {
             list.replaceChildren(h('li', { className: 'ytlc-empty' },
-                '听到哪里有疑问或想法就在下面留言，时间戳和当时的字幕会自动记下。'));
+                '听到哪里有想法就在下面留言：以问号结尾记为疑问，其余记为想法。时间戳和当时的字幕会自动记下。'));
             return;
         }
         let flashed = null;
@@ -869,7 +889,7 @@
             }
             for (const reply of note.replies || []) body.append(h('div', { className: 'ytlc-reply' }, reply.text));
             if (pending.has(note.id)) body.append(h('div', { className: 'ytlc-reply' }, '助教思考中…'));
-            const labelOnly = note.kind === 'mark' && note.text === KIND_LABEL.mark;
+            const labelOnly = note.text === KIND_LABEL[note.kind];
             const item = h('li', { className: labelOnly ? 'ytlc-note ytlc-label-only' : 'ytlc-note', 'data-kind': note.kind },
                 h('button', {
                     type: 'button',
@@ -899,22 +919,35 @@
         if (v) v.currentTime = t;
     }
 
-    function setAnchor(t) {
+    // 点「💡 想法」后，接下来发送的文字补进那条占位留言，而不是另起一条。
+    let filling = null;
+
+    function setAnchor(t, note = null) {
         anchor = t;
+        filling = t === null ? null : note;
         anchorButton.hidden = t === null;
-        if (t !== null) anchorButton.textContent = `⏱ ${formatTime(t)}`;
+        if (t === null) return;
+        anchorButton.textContent = `${note ? '💡' : '⏱'} ${formatTime(t)}`;
+        anchorButton.title = note ? '正在补写这条想法；点击改为在当前时间另起一条' : '点击改为当前播放时间';
     }
 
     function send() {
         const text = input.value.trim();
         if (!text) return;
-        addNote(text, anchor ?? now());
+        if (filling && record?.notes.includes(filling)) {
+            filling.text = text;
+            saveRecord();
+            render(filling.id);
+        } else {
+            addNote(text, anchor ?? now());
+        }
         input.value = '';
         setAnchor(null);
     }
 
     // 留言的时间戳锚定在开始输入的那一刻，而不是按下回车的时刻：打字期间老师已经讲到后面了。
     input.addEventListener('input', () => {
+        if (filling) return;
         if (!input.value.trim()) setAnchor(null);
         else if (anchor === null) setAnchor(now());
     });
@@ -925,6 +958,10 @@
             send();
         } else if (event.key === 'Escape') {
             event.preventDefault();
+            if (filling) {
+                input.value = '';
+                setAnchor(null);
+            }
             input.blur();
             player()?.focus({ preventScroll: true });
         }
@@ -935,6 +972,13 @@
     });
     quickQuestion.addEventListener('click', () => addNote('没听懂', now(), 'question'));
     quickMark.addEventListener('click', () => addNote('重点', now(), 'mark'));
+    quickIdea.addEventListener('click', () => {
+        const note = addNote(KIND_LABEL.note, now(), 'note');
+        // 已经在写别的留言时只占位，不打断正在写的内容。
+        if (!note || input.value.trim()) return;
+        setAnchor(note.t, note);
+        input.focus();
+    });
     copyButton.addEventListener('click', () => {
         if (!record?.notes.length) return;
         GM_setClipboard(toMarkdown(), 'text');
@@ -949,6 +993,7 @@
     clearButton.addEventListener('click', () => {
         if (!record?.notes.length || !confirm(`清空本视频的 ${record.notes.length} 条留言？此操作无法撤销。`)) return;
         record.notes = [];
+        releaseFilling();
         saveRecord();
         render();
     });

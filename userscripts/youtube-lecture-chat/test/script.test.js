@@ -313,3 +313,64 @@ test('像素皮肤用标签显示疑问和重点，「重点」快捷标记不�
     assert.ok(await words.isHidden());
     assert.equal(await page.locator('.ytlc-note .ytlc-text').evaluate(el => getComputedStyle(el, '::before').content), '"重点"');
 });
+
+test('只看结尾问号：结尾有问号是疑问，其余（包括问号开头）都是想法', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const input = page.getByRole('textbox', { name: '发送留言' });
+    for (const text of ['这一步为什么成立？', '为什么成立?  ', '?这里的符号写错了', '可以把它当成 KV cache 的压缩']) {
+        await input.fill(text);
+        await input.press('Enter');
+    }
+    assert.deepEqual(await page.locator('.ytlc-note').evaluateAll(items => items.map(item => item.dataset.kind)),
+        ['question', 'question', 'note', 'note']);
+    await page.getByRole('button', { name: '复制' }).click();
+    assert.match(await page.evaluate(() => window.clipboard), /\*\*想法\*\* \?这里的符号写错了/);
+});
+
+test('「💡 想法」先在当前时间占位，接着输入的文字补进这条留言，时间戳不变', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const input = page.getByRole('textbox', { name: '发送留言' });
+    const notes = page.locator('.ytlc-note');
+    await page.evaluate(() => play(600));
+    await page.getByRole('button', { name: '💡 想法' }).click();
+    assert.equal(await notes.count(), 1);
+    assert.equal(await notes.getAttribute('data-kind'), 'note');
+    assert.ok(await input.evaluate(el => el === document.activeElement));
+    assert.equal(await page.locator('.ytlc-anchor').innerText(), '💡 10:00');
+
+    await page.evaluate(() => play(640));
+    await input.pressSequentially('能不能用在扩散模型上？');
+    await input.press('Enter');
+    assert.equal(await notes.count(), 1);
+    assert.equal(await notes.locator('.ytlc-time').innerText(), '10:00');
+    assert.equal(await notes.locator('.ytlc-words').innerText(), '能不能用在扩散模型上？');
+    assert.equal(await notes.getAttribute('data-kind'), 'note', '点了想法按钮的留言不按问号改成疑问');
+    assert.ok(await page.locator('.ytlc-anchor').isHidden());
+
+    // 占位后不写，按 Esc 放弃补写，占位留言保留；之后的输入另起一条。
+    await page.evaluate(() => play(700));
+    await page.getByRole('button', { name: '💡 想法' }).click();
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => play(720));
+    await input.fill('另一条');
+    await input.press('Enter');
+    assert.deepEqual(await page.locator('.ytlc-time').allInnerTexts(), ['10:00', '11:40', '12:00']);
+
+    // 补写中删除占位留言：草稿保留，按普通留言发送。
+    await page.evaluate(() => play(800));
+    await page.getByRole('button', { name: '💡 想法' }).click();
+    await input.pressSequentially('草稿');
+    await notes.nth(3).hover();
+    await notes.nth(3).getByRole('button', { name: '删除这条留言' }).click();
+    assert.equal(await page.locator('.ytlc-anchor').innerText(), '⏱ 13:20');
+    await input.press('Enter');
+    assert.deepEqual(await page.locator('.ytlc-words').allInnerTexts(), ['能不能用在扩散模型上？', '想法', '另一条', '草稿']);
+
+    // 像素皮肤：只占位未补写的留言只显示「想法」标签，不重复文字。
+    await page.getByRole('button', { name: '更换皮肤' }).click();
+    await page.getByRole('menuitemradio', { name: /RPG/ }).click();
+    assert.ok(await page.locator('.ytlc-words', { hasText: /^想法$/ }).isHidden());
+    assert.equal(await notes.nth(1).locator('.ytlc-text').evaluate(el => getComputedStyle(el, '::before').content), '"想法"');
+});
