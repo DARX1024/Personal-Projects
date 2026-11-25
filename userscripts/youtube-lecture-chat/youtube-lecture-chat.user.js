@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.5.0
+// @version      1.6.0
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -21,7 +21,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.5.0';
+    const VERSION = '1.6.0';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -294,8 +294,20 @@
             background: var(--ytlc-chip);
             white-space: pre-wrap;
         }
-        .ytlc-delete {
+        /* 悬停一条留言时右侧出现「编辑」「删除」 */
+        .ytlc-actions {
+            display: flex;
             flex: none;
+            gap: 2px;
+            opacity: 0;
+        }
+        /* 用透明度而不是 visibility 隐藏，这样不悬停时也能用 Tab 键聚焦到按钮。 */
+        .ytlc-note:is(:hover, :focus-within) .ytlc-actions { opacity: 1; }
+        .ytlc-editing .ytlc-actions { display: none; }
+        .ytlc-delete, .ytlc-edit {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             width: 24px;
             height: 24px;
             padding: 0;
@@ -303,10 +315,36 @@
             border-radius: 12px;
             background: none;
             color: var(--ytlc-muted) !important;
-            visibility: hidden;
         }
-        .ytlc-note:is(:hover, :focus-within) .ytlc-delete { visibility: visible; }
-        .ytlc-delete:hover { background: var(--ytlc-line); }
+        :is(.ytlc-delete, .ytlc-edit):is(:hover, :focus-visible) {
+            outline: none;
+            background: var(--ytlc-line);
+            color: var(--ytlc-fg) !important;
+        }
+        .ytlc-edit svg { width: 16px; height: 16px; fill: currentColor; }
+        .ytlc-edit .ytlc-pencil-pixel { display: none; }
+        .ytlc-edit-input {
+            display: block;
+            box-sizing: border-box;
+            width: 100%;
+            min-height: 30px;
+            max-height: 160px;
+            margin: 4px 0 2px;
+            padding: 4px 8px;
+            border: 1px solid var(--ytlc-accent);
+            border-radius: 6px;
+            background: var(--ytlc-bg);
+            color: var(--ytlc-fg);
+            font: inherit;
+            resize: none;
+            field-sizing: content;
+        }
+        .ytlc-edit-input:focus { outline: none; }
+        .ytlc-edit-hint {
+            color: var(--ytlc-muted);
+            font-size: 12px;
+            line-height: 16px;
+        }
         .ytlc-composer {
             padding: 8px 12px 12px;
             border-top: 1px solid var(--ytlc-line);
@@ -517,7 +555,19 @@
         .ytlc-pixel .ytlc-label-only .ytlc-words { display: none; }
         .ytlc-pixel .ytlc-context { font-size: 12px; line-height: 18px; }
         .ytlc-pixel .ytlc-reply { border-left-width: 4px; border-radius: 0; background: var(--ytlc-hl); }
-        .ytlc-pixel .ytlc-delete { border-radius: 0; }
+        .ytlc-pixel :is(.ytlc-delete, .ytlc-edit) { border-radius: 0; }
+        .ytlc-pixel .ytlc-edit .ytlc-pencil { display: none; }
+        .ytlc-pixel .ytlc-edit .ytlc-pencil-pixel { display: block; }
+        .ytlc-pixel .ytlc-edit-input {
+            width: calc(100% - 4px);
+            margin: 6px 2px 4px;
+            border: 0;
+            border-radius: 0;
+            background: var(--ytlc-input);
+            font-size: 12px !important;
+            line-height: 18px;
+            box-shadow: 0 0 0 2px var(--ytlc-accent);
+        }
         .ytlc-pixel .ytlc-composer { border-top: 4px solid var(--ytlc-line); }
         .ytlc-pixel .ytlc-input {
             width: calc(100% - 4px);
@@ -663,6 +713,31 @@
         return svg;
     }
 
+    // 铅笔图标：默认皮肤用常见的矢量铅笔，像素皮肤用 8×8 的像素铅笔，颜色都跟随文字色。
+    function pencilIcon() {
+        const ns = 'http://www.w3.org/2000/svg';
+        const vector = document.createElementNS(ns, 'svg');
+        vector.setAttribute('class', 'ytlc-pencil');
+        vector.setAttribute('viewBox', '0 0 24 24');
+        vector.setAttribute('aria-hidden', 'true');
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z');
+        vector.append(path);
+        const pixel = document.createElementNS(ns, 'svg');
+        pixel.setAttribute('class', 'ytlc-pencil-pixel');
+        pixel.setAttribute('viewBox', '0 0 8 8');
+        pixel.setAttribute('shape-rendering', 'crispEdges');
+        pixel.setAttribute('aria-hidden', 'true');
+        ['.....xx.', '....x.xx', '...x.xx.', '..x.xx..', '.x.xx...', 'x.xx....', 'xxx.....', 'xx......'].forEach((row, y) =>
+            [...row].forEach((ch, x) => {
+                if (ch !== 'x') return;
+                const rect = document.createElementNS(ns, 'rect');
+                for (const [key, value] of Object.entries({ x, y, width: 1, height: 1 })) rect.setAttribute(key, String(value));
+                pixel.append(rect);
+            }));
+        return [vector, pixel];
+    }
+
     // ---- 播放器与页面信息 ----
     function player() {
         return document.querySelector(':is(ytd-watch-flexy, ytd-watch-grid):not([hidden]) #movie_player')
@@ -796,6 +871,63 @@
         if (filling && !record?.notes.includes(filling)) setAnchor(input.value.trim() ? anchor : null);
     }
 
+    // ---- 编辑单条留言：只改文字，类别和时间戳不变 ----
+    let editingId = null;
+    let editDraft = '';
+    let focusEditor = false;
+
+    function editor(note) {
+        const field = h('textarea', {
+            className: 'ytlc-edit-input',
+            rows: 1,
+            value: editDraft,
+            'aria-label': '编辑留言',
+        });
+        field.addEventListener('input', () => { editDraft = field.value; });
+        field.addEventListener('keydown', event => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+                event.preventDefault();
+                finishEdit(true, true);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                finishEdit(false, true);
+            }
+        });
+        // 焦点移到列表里的其他按钮（换一条编辑、切换类别等）时由那个按钮处理；移到别处则保存。
+        field.addEventListener('blur', event => {
+            if (!event.relatedTarget?.closest?.('.ytlc-list')) finishEdit(true, false);
+        });
+        const fragment = document.createDocumentFragment();
+        fragment.append(field, h('div', { className: 'ytlc-edit-hint' }, 'Enter 保存 · Shift+Enter 换行 · Esc 取消'));
+        return fragment;
+    }
+
+    function startEdit(id) {
+        const note = record?.notes.find(item => item.id === id);
+        if (!note) return;
+        if (editingId && editingId !== id) finishEdit(true, false);
+        editingId = id;
+        // 只有标签的占位留言（如「想法」）从空白开始写。
+        editDraft = note.text === KIND_LABEL[note.kind] ? '' : note.text;
+        focusEditor = true;
+        render();
+    }
+
+    function finishEdit(save, refocus) {
+        if (!editingId) return;
+        const id = editingId;
+        editingId = null;
+        const note = record?.notes.find(item => item.id === id);
+        const text = editDraft.trim();
+        if (save && note && text && text !== note.text) {
+            note.text = text;
+            note.editedAt = new Date().toISOString();
+            saveRecord();
+        }
+        render(save && note ? id : undefined);
+        if (refocus) list.querySelector(`[data-id="${id}"] .ytlc-edit`)?.focus({ preventScroll: true });
+    }
+
     // 切换类别；只有标签、没写内容的留言（如占位的「想法」）文字跟着改成新类别名。
     function cycleKind(id) {
         const note = record?.notes.find(item => item.id === id);
@@ -810,6 +942,7 @@
     }
 
     function deleteNote(id) {
+        if (editingId === id) editingId = null;
         record.notes = record.notes.filter(note => note.id !== id);
         releaseFilling();
         saveRecord();
@@ -922,7 +1055,7 @@
                     },
                     h('span', { className: 'ytlc-tag-icon' }, KIND_ICON[note.kind]),
                     h('span', { className: 'ytlc-tag-label' }, KIND_LABEL[note.kind])),
-                    h('span', { className: 'ytlc-words' }, note.text)));
+                    note.id === editingId ? editor(note) : h('span', { className: 'ytlc-words' }, note.text)));
             if (note.context?.length) {
                 body.append(h('div', { className: 'ytlc-context', title: note.context.join('\n') },
                     '字幕：' + note.context.at(-1)));
@@ -931,7 +1064,8 @@
             if (pending.has(note.id)) body.append(h('div', { className: 'ytlc-reply' }, '助教思考中…'));
             const labelOnly = note.text === KIND_LABEL[note.kind];
             const item = h('li', {
-                className: labelOnly ? 'ytlc-note ytlc-label-only' : 'ytlc-note',
+                className: ['ytlc-note', labelOnly && 'ytlc-label-only', note.id === editingId && 'ytlc-editing']
+                    .filter(Boolean).join(' '),
                 'data-kind': note.kind,
                 'data-id': note.id,
             },
@@ -942,15 +1076,33 @@
                     onclick: () => seek(note.t),
                 }, formatTime(note.t)),
                 body,
-                h('button', {
-                    type: 'button',
-                    className: 'ytlc-delete',
-                    'aria-label': '删除这条留言',
-                    onclick: () => deleteNote(note.id),
-                }, '×'));
+                h('div', { className: 'ytlc-actions' },
+                    h('button', {
+                        type: 'button',
+                        className: 'ytlc-edit',
+                        'aria-label': '编辑这条留言',
+                        title: '编辑',
+                        onclick: () => startEdit(note.id),
+                    }, ...pencilIcon()),
+                    h('button', {
+                        type: 'button',
+                        className: 'ytlc-delete',
+                        'aria-label': '删除这条留言',
+                        title: '删除',
+                        onclick: () => deleteNote(note.id),
+                    }, '×')));
             if (note.id === flashId) flashed = item;
             return item;
         }));
+        if (focusEditor) {
+            focusEditor = false;
+            const field = list.querySelector('.ytlc-edit-input');
+            if (field) {
+                field.focus({ preventScroll: true });
+                field.setSelectionRange(field.value.length, field.value.length);
+                field.scrollIntoView({ block: 'nearest' });
+            }
+        }
         if (flashed) {
             flashed.classList.add('ytlc-flash');
             flashed.scrollIntoView({ block: 'nearest' });
@@ -1238,6 +1390,7 @@
             videoId = id;
             record = id ? loadRecord(id) : null;
             captionLog = [];
+            editingId = null;
             input.value = '';
             setAnchor(null);
             render();

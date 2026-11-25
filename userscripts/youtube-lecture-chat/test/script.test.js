@@ -431,3 +431,100 @@ test('只有标签的占位留言切换类别时文字跟着变，像素皮肤�
     await note.locator('.ytlc-tag').click();
     assert.equal(await note.locator('.ytlc-tag').innerText(), '疑问');
 });
+
+test('悬停留言时铅笔在 × 左边，点开原地编辑：Enter 保存，Shift+Enter 换行，组字时回车不保存，类别和时间戳不变', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const input = page.getByRole('textbox', { name: '发送留言' });
+    await page.evaluate(() => play(90));
+    await input.fill('softmax 为什么要除以根号 d');
+    await input.press('Enter');
+    const note = page.locator('.ytlc-note');
+    const edit = page.getByRole('button', { name: '编辑这条留言' });
+    const remove = page.getByRole('button', { name: '删除这条留言' });
+    const shown = () => note.locator('.ytlc-actions').evaluate(el => getComputedStyle(el).opacity);
+    await page.mouse.move(0, 0);
+    assert.equal(await shown(), '0');
+    await note.hover();
+    assert.equal(await shown(), '1');
+    const [editBox, removeBox] = [await edit.boundingBox(), await remove.boundingBox()];
+    assert.ok(editBox.x + editBox.width <= removeBox.x && Math.abs(editBox.y - removeBox.y) < 1, '铅笔紧挨在 × 左边');
+    assert.equal(await edit.locator('svg.ytlc-pencil').count(), 1);
+
+    await edit.click();
+    const field = page.getByRole('textbox', { name: '编辑留言' });
+    assert.ok(await field.evaluate(el => el === document.activeElement));
+    assert.equal(await field.inputValue(), 'softmax 为什么要除以根号 d');
+    assert.ok(await edit.isHidden(), '编辑时隐藏操作按钮');
+    await field.press('End');
+    await field.pressSequentially('，防止方差变大');
+    await field.evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true })));
+    assert.equal(await field.count(), 1);
+    await field.press('Shift+Enter');
+    await field.pressSequentially('（补充）');
+    await field.press('Enter');
+    assert.equal(await field.count(), 0);
+    assert.equal(await note.locator('.ytlc-words').innerText(), 'softmax 为什么要除以根号 d，防止方差变大\n（补充）');
+    assert.equal(await note.getAttribute('data-kind'), 'note');
+    assert.equal(await note.locator('.ytlc-time').innerText(), '1:30');
+    assert.ok(await edit.evaluate(el => el === document.activeElement), '保存后焦点回到铅笔按钮');
+
+    const reloaded = await openPage(context, '/watch?v=abc');
+    assert.equal(await reloaded.locator('.ytlc-words').innerText(), 'softmax 为什么要除以根号 d，防止方差变大\n（补充）');
+    await reloaded.getByRole('button', { name: '复制' }).click();
+    assert.match(await reloaded.evaluate(() => window.clipboard), /\*\*想法\*\* softmax 为什么要除以根号 d，防止方差变大\n  （补充）/);
+});
+
+test('编辑：Esc 取消、清空不保存、点到别处保存，占位留言从空白开始写，同时只编辑一条', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const input = page.getByRole('textbox', { name: '发送留言' });
+    for (const text of ['第一条', '第二条']) {
+        await input.fill(text);
+        await input.press('Enter');
+    }
+    const notes = page.locator('.ytlc-note');
+    const field = page.getByRole('textbox', { name: '编辑留言' });
+    const editAt = async i => {
+        await notes.nth(i).hover();
+        await notes.nth(i).getByRole('button', { name: '编辑这条留言' }).click();
+    };
+
+    await editAt(0);
+    await field.fill('改了但取消');
+    await field.press('Escape');
+    assert.deepEqual(await page.locator('.ytlc-words').allInnerTexts(), ['第一条', '第二条']);
+
+    await editAt(0);
+    await field.fill('   ');
+    await field.press('Enter');
+    assert.deepEqual(await page.locator('.ytlc-words').allInnerTexts(), ['第一条', '第二条']);
+
+    // 编辑第一条时点第二条的铅笔：第一条先保存，再编辑第二条。
+    await editAt(0);
+    await field.fill('第一条（改）');
+    await editAt(1);
+    assert.equal(await field.count(), 1);
+    assert.equal(await field.inputValue(), '第二条');
+    assert.equal(await notes.nth(0).locator('.ytlc-words').innerText(), '第一条（改）');
+    await field.fill('第二条（改）');
+    await input.click();
+    assert.equal(await field.count(), 0);
+    assert.deepEqual(await page.locator('.ytlc-words').allInnerTexts(), ['第一条（改）', '第二条（改）']);
+
+    await page.getByRole('button', { name: '💡 想法' }).click();
+    await page.keyboard.press('Escape');
+    await editAt(2);
+    assert.equal(await field.inputValue(), '');
+    await field.fill('课后补上的想法');
+    await field.press('Enter');
+    assert.equal(await notes.nth(2).locator('.ytlc-words').innerText(), '课后补上的想法');
+    assert.equal(await notes.nth(2).getAttribute('data-kind'), 'note');
+
+    // 像素皮肤换成像素铅笔。
+    await page.getByRole('button', { name: '更换皮肤' }).click();
+    await page.getByRole('menuitemradio', { name: /月夜自习/ }).click();
+    await notes.nth(0).hover();
+    assert.ok(await notes.nth(0).locator('.ytlc-pencil-pixel').isVisible());
+    assert.ok(await notes.nth(0).locator('.ytlc-pencil').isHidden());
+});
