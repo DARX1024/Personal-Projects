@@ -49,6 +49,7 @@ async function openPage(context, pathname) {
         window.GM_deleteValue = key => localStorage.removeItem('gm:' + key);
         window.GM_setClipboard = text => { window.clipboard = text; };
         window.GM_getResourceURL = () => 'data:font/woff2;base64,';
+        window.GM_listValues = () => Object.keys(localStorage).filter(key => key.startsWith('gm:')).map(key => key.slice(3));
         // 无片源的 video 无法播放，用可写属性模拟播放进度。
         const video = document.querySelector('video');
         let time = 0;
@@ -527,4 +528,192 @@ test('编辑：Esc 取消、清空不保存、点到别处保存，占位留言�
     await notes.nth(0).hover();
     assert.ok(await notes.nth(0).locator('.ytlc-pencil-pixel').isVisible());
     assert.ok(await notes.nth(0).locator('.ytlc-pencil').isHidden());
+});
+
+// 往存储里放几条其他视频的笔记（不经过界面）。
+async function seed(page, records) {
+    await page.evaluate(records => {
+        for (const rec of records) localStorage.setItem('gm:video:' + rec.id, JSON.stringify(rec));
+    }, records);
+}
+const flat = async locator => (await locator.innerText()).replace(/\n/g, '');
+const day = n => new Date(Date.now() - n * 86400000).toISOString();
+const note = (id, t, kind, text, ago) => ({ id, t, kind, text, context: [], replies: [], createdAt: day(ago) });
+const SEEDED = [
+    { id: 'old', title: 'Flow Matching 从零推导', channel: '某频道', notes: [
+        note('o1', 450, 'note', 'OT 路径和 VP 路径能不能插值', 5), note('o2', 900, 'question', '这里的散度怎么来的？', 5)] },
+    { id: 'mid', title: 'AI Agent (1/3)：Context Engineering', channel: 'Hung-yi Lee', notes: [
+        note('m1', 725, 'note', '把 tool 结果做摘要再放回 context', 1), note('m2', 800, 'mark', '重点', 1),
+        note('m3', 2321, 'note', '想法', 1)] },
+];
+
+test('点标题「课堂留言 ▾」打开笔记库，再点「笔记库 ▴」回到本视频留言', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const input = page.getByRole('textbox', { name: '发送留言' });
+    await input.fill('本视频的想法');
+    await input.press('Enter');
+    await seed(page, SEEDED);
+    const title = page.locator('.ytlc-title');
+    assert.equal(await flat(title), '课堂留言1▾');
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    assert.equal(await flat(title), '笔记库3 个视频▴');
+    for (const hidden of ['.ytlc-list', '.ytlc-composer', '.ytlc-tool']) {
+        assert.ok(await page.locator(hidden).first().isHidden(), `${hidden} 在笔记库中隐藏`);
+    }
+    assert.ok(await page.getByRole('searchbox', { name: '搜索笔记' }).isVisible());
+    assert.ok(await page.locator('.ytlc-lamp').isVisible(), '拉灯开关保留');
+    await page.getByRole('button', { name: '返回本视频留言' }).click();
+    assert.equal(await flat(title), '课堂留言1▾');
+    assert.ok(await input.isVisible());
+    // 在笔记库里按反引号也回到留言并聚焦输入框。
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    await page.locator('.ytlc-lib-list').click();
+    await page.keyboard.press('Backquote');
+    assert.ok(await input.evaluate(el => el === document.activeElement));
+});
+
+test('笔记库按最近记录排序，标出正在看的视频，点一行展开留言，点时间戳打开对应视频', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc&list=PL123');
+    await page.evaluate(() => play(30));
+    await page.getByRole('button', { name: '⭐ 重点' }).click();
+    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('gm:video:abc'))).playlistId, 'PL123');
+    await seed(page, SEEDED);
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    const rows = page.locator('.ytlc-video');
+    assert.deepEqual(await rows.evaluateAll(items => items.map(item => item.dataset.id)), ['abc', 'mid', 'old']);
+    assert.match(await rows.nth(0).locator('.ytlc-vmeta').innerText(), /今天 \d\d:\d\d[\s\S]*正在看/);
+    assert.match(await rows.nth(1).locator('.ytlc-vmeta').innerText(), /Hung-yi Lee[\s\S]*昨天/);
+    assert.equal(await flat(rows.nth(1).locator('.ytlc-badges')), '💡 2⭐ 1');
+
+    const toggle = rows.nth(1).locator('.ytlc-vinfo');
+    await toggle.click();
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    assert.deepEqual(await rows.nth(1).locator('.ytlc-lib-note .ytlc-time').allInnerTexts(), ['12:05', '13:20', '38:41']);
+    await toggle.click();
+    assert.equal(await rows.nth(1).locator('.ytlc-lib-note').count(), 0);
+
+    // 本视频：跳到时间点并回到留言视图。
+    await rows.nth(0).locator('.ytlc-vinfo').click();
+    await page.evaluate(() => play(500));
+    await rows.nth(0).locator('.ytlc-lib-note .ytlc-time').click();
+    assert.equal(await page.evaluate(() => document.querySelector('video').currentTime), 30);
+    assert.ok(await page.getByRole('button', { name: '打开笔记库' }).isVisible());
+
+    // 其他视频：打开那个视频的那一秒。
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    await rows.nth(2).locator('.ytlc-vinfo').click();
+    await Promise.all([
+        page.waitForURL('https://www.youtube.com/watch?v=old&t=900s'),
+        rows.nth(2).locator('.ytlc-lib-note .ytlc-time').nth(1).click(),
+    ]);
+});
+
+test('笔记库搜索标题和留言，按类别筛选后跨视频分组，并可一键复制这一类', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    await seed(page, SEEDED);
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    const search = page.getByRole('searchbox', { name: '搜索笔记' });
+    await search.fill('散度');
+    assert.deepEqual(await page.locator('.ytlc-video').evaluateAll(items => items.map(item => item.dataset.id)), ['old']);
+    await search.fill('agent');
+    assert.deepEqual(await page.locator('.ytlc-video').evaluateAll(items => items.map(item => item.dataset.id)), ['mid']);
+    await search.fill('不存在的词');
+    assert.equal(await page.locator('.ytlc-lib-empty').innerText(), '没有符合条件的笔记。');
+    await search.fill('');
+
+    await page.getByRole('button', { name: '想法 3', exact: true }).click();
+    assert.equal(await flat(page.locator('.ytlc-title')), '笔记库3 条想法▴');
+    assert.deepEqual(await page.locator('.ytlc-group-head b').allInnerTexts(), ['AI Agent (1/3)：Context Engineering', 'Flow Matching 从零推导']);
+    assert.deepEqual(await page.locator('.ytlc-group .ytlc-lib-text').allInnerTexts(), ['把 tool 结果做摘要再放回 context', '', 'OT 路径和 VP 路径能不能插值']);
+    await page.getByRole('button', { name: '复制这 3 条想法' }).click();
+    const markdown = await page.evaluate(() => window.clipboard);
+    assert.match(markdown, /^# 所有「想法」\n\n- 导出：.*共 3 条，来自 2 个视频/);
+    assert.match(markdown, /## AI Agent \(1\/3\)：Context Engineering\n\n- 视频：https:\/\/www\.youtube\.com\/watch\?v=mid\n- 频道：Hung-yi Lee\n\n- \[12:05\]\(https:\/\/www\.youtube\.com\/watch\?v=mid&t=725s\) \*\*想法\*\* 把 tool 结果做摘要再放回 context\n- \[38:41\]\(.*\) \*\*想法\*\*\n/);
+    assert.doesNotMatch(markdown, /散度/);
+    assert.equal(await page.locator('.ytlc-lib-status').innerText(), '已复制 3 条想法');
+
+    await search.fill('插值');
+    assert.equal(await page.getByRole('button', { name: /^想法 / }).getAttribute('aria-label'), '想法 1');
+    await page.getByRole('button', { name: '全部', exact: true }).click();
+    assert.equal(await page.locator('.ytlc-video').count(), 1);
+});
+
+test('笔记库勾选多个视频合并复制，删除需确认，删到正在看的视频时留言板同步清空', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const input = page.getByRole('textbox', { name: '发送留言' });
+    await input.fill('本视频留言');
+    await input.press('Enter');
+    await seed(page, SEEDED);
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    assert.equal(await page.locator('.ytlc-lib-bar .ytlc-lib-status').innerText(), '勾选视频可合并复制或删除');
+    await page.getByRole('checkbox', { name: /AI Agent/ }).check();
+    await page.getByRole('checkbox', { name: /Flow Matching/ }).check();
+    assert.match(await page.locator('.ytlc-lib-bar').innerText(), /已选 2 个/);
+    await page.getByRole('button', { name: '合并复制' }).click();
+    const markdown = await page.evaluate(() => window.clipboard);
+    assert.match(markdown, /^# 听课留言合集：2 个视频\n\n- 导出：.*共 5 条，来自 2 个视频/);
+    assert.ok(markdown.indexOf('## AI Agent') < markdown.indexOf('## Flow Matching'), '按最近记录排列');
+    assert.match(markdown, /\*\*疑问\*\* 这里的散度怎么来的？/);
+
+    await page.getByRole('checkbox', { name: /Flow Matching/ }).uncheck();
+    await page.getByRole('checkbox', { name: /Context Window/ }).check();
+    let dialog = '';
+    page.once('dialog', d => { dialog = d.message(); d.dismiss(); });
+    await page.getByRole('button', { name: '删除' }).click();
+    assert.match(dialog, /删除选中的 2 个视频/);
+    assert.equal(await page.locator('.ytlc-video').count(), 3);
+    page.once('dialog', d => d.accept());
+    await page.getByRole('button', { name: '删除' }).click();
+    assert.deepEqual(await page.locator('.ytlc-video').evaluateAll(items => items.map(item => item.dataset.id)), ['old']);
+    assert.equal(await page.evaluate(() => localStorage.getItem('gm:video:abc')), null);
+    await page.getByRole('button', { name: '返回本视频留言' }).click();
+    assert.equal(await page.locator('.ytlc-note').count(), 0);
+});
+
+test('导出全部为 JSON 备份，导入时按留言合并、不重复，坏文件给出提示', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    await seed(page, SEEDED);
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        page.getByRole('button', { name: '导出全部' }).click(),
+    ]);
+    assert.match(download.suggestedFilename(), /^youtube-lecture-notes-\d{8}\.json$/);
+    const backup = JSON.parse(require('node:fs').readFileSync(await download.path(), 'utf8'));
+    assert.equal(backup.format, 'youtube-lecture-chat');
+    assert.deepEqual(backup.records.map(rec => rec.id).sort(), ['mid', 'old']);
+
+    // 在另一个浏览器里：已有一条重复的留言和一条自己的留言。
+    const other = await newContext(t);
+    const fresh = await openPage(other, '/watch?v=abc');
+    await seed(fresh, [{ id: 'old', title: 'Flow Matching 从零推导', channel: '', notes: [SEEDED[0].notes[0], note('x1', 10, 'note', '本机独有', 0)] }]);
+    await fresh.getByRole('button', { name: '打开笔记库' }).click();
+    const file = path => ({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(path) });
+    await fresh.locator('.ytlc-library input[type=file]').setInputFiles(file(JSON.stringify(backup)));
+    await fresh.locator('.ytlc-lib-status', { hasText: '已导入' }).waitFor();
+    assert.equal(await fresh.locator('.ytlc-lib-status').innerText(), '已导入 2 个视频，新增 4 条留言');
+    const old = JSON.parse(await fresh.evaluate(() => localStorage.getItem('gm:video:old')));
+    assert.deepEqual(old.notes.map(n => n.id), ['x1', 'o1', 'o2']);
+    assert.equal(old.channel, '某频道');
+
+    await fresh.locator('.ytlc-library input[type=file]').setInputFiles(file(JSON.stringify(backup)));
+    await fresh.locator('.ytlc-lib-status', { hasText: '没有需要导入的新留言' }).waitFor();
+    await fresh.locator('.ytlc-library input[type=file]').setInputFiles(file('{"hello":1}'));
+    await fresh.locator('.ytlc-lib-status', { hasText: '导入失败：不是留言板导出的备份文件' }).waitFor();
+});
+
+test('像素皮肤下的笔记库：类别筛选和统计显示为文字标签', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    await seed(page, SEEDED);
+    await page.getByRole('button', { name: '更换皮肤' }).click();
+    await page.getByRole('menuitemradio', { name: /RPG/ }).click();
+    await page.getByRole('button', { name: '打开笔记库' }).click();
+    assert.equal(await flat(page.getByRole('button', { name: '疑问 1', exact: true })), '疑问1');
+    assert.equal(await flat(page.locator('.ytlc-video').nth(0).locator('.ytlc-badges')), '想法 2重点 1');
 });

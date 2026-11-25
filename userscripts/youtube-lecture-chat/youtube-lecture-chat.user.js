@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.6.0
+// @version      1.7.0
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+// @grant        GM_listValues
 // @grant        GM_setClipboard
 // @grant        GM_getResourceURL
 // @resource     pixelFont https://cdn.jsdelivr.net/npm/@fontsource/fusion-pixel-12px-proportional-sc@5.3.0/files/fusion-pixel-12px-proportional-sc-latin-400-normal.woff2
@@ -21,7 +22,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.6.0';
+    const VERSION = '1.7.0';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -141,9 +142,33 @@
         }
         .ytlc-title {
             flex: 1;
+            min-width: 0;
             font-size: 16px;
             font-weight: 500;
             white-space: nowrap;
+        }
+        /* 标题本身就是笔记库的入口：「课堂留言 ▾」⇄「笔记库 ▴」 */
+        .ytlc-title-btn {
+            display: inline-flex;
+            align-items: center;
+            max-width: 100%;
+            margin-left: -6px;
+            padding: 2px 8px 2px 6px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            font: inherit !important;
+            line-height: inherit;
+        }
+        .ytlc-title-btn:is(:hover, :focus-visible) {
+            outline: none;
+            background: var(--ytlc-chip);
+        }
+        .ytlc-caret {
+            margin-left: 4px;
+            color: var(--ytlc-muted);
+            font-size: 11px;
+            font-weight: 400;
         }
         .ytlc-count {
             margin-left: 6px;
@@ -677,6 +702,223 @@
             --ytlc-grid: #342e28;
             color-scheme: dark;
         }
+        /* ---- 笔记库 ---- */
+        .ytlc-panel[data-view="library"] :is(.ytlc-list, .ytlc-composer, .ytlc-tool) { display: none; }
+        .ytlc-panel:not([data-view="library"]) .ytlc-library { display: none; }
+        .ytlc-library {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .ytlc-lib-tools {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px 12px 8px 16px;
+            border-bottom: 1px solid var(--ytlc-line);
+        }
+        .ytlc-search {
+            box-sizing: border-box;
+            width: 100%;
+            height: 32px;
+            padding: 0 14px;
+            border: 1px solid transparent;
+            border-radius: 16px;
+            background: var(--ytlc-chip);
+            color: var(--ytlc-fg);
+            font: inherit;
+            font-size: 13px;
+        }
+        .ytlc-search::placeholder { color: var(--ytlc-muted); }
+        .ytlc-search:focus { outline: none; border-color: var(--ytlc-accent); }
+        .ytlc-chips {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+        }
+        .ytlc-chip {
+            height: 26px;
+            padding: 0 10px;
+            border: 0;
+            border-radius: 8px;
+            background: var(--ytlc-chip);
+            font-size: 13px !important;
+        }
+        .ytlc-chip:hover { background: var(--ytlc-line); }
+        .ytlc-chip[aria-pressed="true"] { background: var(--ytlc-fg); color: var(--ytlc-bg) !important; }
+        .ytlc-chip i { margin-left: 3px; font-style: normal; opacity: .65; font-size: 12px; }
+        .ytlc-sort-label { margin-left: auto; color: var(--ytlc-muted); font-size: 12px; }
+        .ytlc-lib-list {
+            flex: 1;
+            min-height: 0;
+            margin: 0;
+            padding: 4px 0 8px;
+            list-style: none;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+        .ytlc-lib-empty { padding: 24px 20px; color: var(--ytlc-muted); text-align: center; }
+        .ytlc-video-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px 12px 8px 16px;
+        }
+        .ytlc-video-row:hover { background: var(--ytlc-chip); }
+        .ytlc-current > .ytlc-video-row { background: color-mix(in srgb, var(--ytlc-accent) 9%, transparent); }
+        .ytlc-check {
+            flex: none;
+            width: 16px;
+            height: 16px;
+            margin: 3px 0 0;
+            accent-color: var(--ytlc-accent);
+            cursor: pointer;
+        }
+        .ytlc-vinfo {
+            display: block;
+            flex: 1;
+            min-width: 0;
+            padding: 0;
+            border: 0;
+            background: none;
+            text-align: left;
+        }
+        .ytlc-vinfo:focus-visible { outline: 2px solid var(--ytlc-accent); outline-offset: 2px; }
+        .ytlc-vtitle {
+            display: -webkit-box;
+            overflow: hidden;
+            font-weight: 500;
+            overflow-wrap: anywhere;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+        }
+        .ytlc-vmeta, .ytlc-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0 8px;
+            margin-top: 2px;
+            color: var(--ytlc-muted);
+            font-size: 12px;
+            line-height: 16px;
+        }
+        .ytlc-badges { margin-top: 4px; }
+        .ytlc-now { color: var(--ytlc-accent); }
+        .ytlc-vcaret { flex: none; margin-top: 2px; color: var(--ytlc-muted); font-size: 11px; }
+        .ytlc-lib-notes {
+            margin: 0;
+            padding: 0 0 6px 42px;
+            list-style: none;
+        }
+        .ytlc-group .ytlc-lib-notes { padding-left: 16px; }
+        .ytlc-lib-note {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 3px 12px 3px 0;
+        }
+        .ytlc-lib-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .ytlc-kind { flex: none; }
+        .ytlc-group-head {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            padding: 10px 12px 4px 16px;
+            color: var(--ytlc-muted);
+            font-size: 12px;
+        }
+        .ytlc-group-head b {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            color: var(--ytlc-fg);
+            font-size: 13px;
+            font-weight: 500;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+        .ytlc-lib-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 30px;
+            padding: 8px 12px 10px 16px;
+            border-top: 1px solid var(--ytlc-line);
+            font-size: 13px;
+        }
+        .ytlc-bar-btn {
+            height: 28px;
+            padding: 0 12px;
+            border: 0;
+            border-radius: 14px;
+            background: var(--ytlc-chip);
+            font-size: 13px !important;
+            white-space: nowrap;
+        }
+        .ytlc-bar-btn:hover { background: var(--ytlc-line); }
+        .ytlc-bar-btn.ytlc-primary { background: var(--ytlc-accent); color: var(--ytlc-bg) !important; }
+        .ytlc-bar-btn:disabled { opacity: .5; cursor: default; }
+        .ytlc-lib-status { min-width: 0; color: var(--ytlc-muted); font-size: 12px; }
+        .ytlc-bar-links {
+            display: flex;
+            flex: none;
+            align-items: center;
+            margin-left: auto;
+            color: var(--ytlc-muted);
+            font-size: 12px;
+        }
+        .ytlc-link {
+            padding: 2px 4px;
+            border: 0;
+            background: none;
+            color: var(--ytlc-muted) !important;
+            font-size: 12px !important;
+        }
+        .ytlc-link:hover { color: var(--ytlc-fg) !important; text-decoration: underline; }
+        /* 像素皮肤下的笔记库 */
+        .ytlc-pixel .ytlc-title-btn { border-radius: 0; }
+        .ytlc-pixel .ytlc-caret { font-size: 12px; }
+        .ytlc-pixel :is(.ytlc-lib-tools, .ytlc-lib-bar) { border-width: 4px; border-color: var(--ytlc-line); }
+        .ytlc-pixel .ytlc-search {
+            width: calc(100% - 4px);
+            margin: 2px;
+            border: 0;
+            border-radius: 0;
+            background: var(--ytlc-input);
+            font-size: 12px;
+            box-shadow: 0 0 0 2px var(--ytlc-frame), inset 2px 2px 0 0 var(--ytlc-shade);
+        }
+        .ytlc-pixel .ytlc-search:focus { box-shadow: 0 0 0 2px var(--ytlc-accent), inset 2px 2px 0 0 var(--ytlc-shade); }
+        .ytlc-pixel :is(.ytlc-chip, .ytlc-bar-btn) {
+            height: auto;
+            margin: 2px;
+            padding: 6px 7px 7px;
+            border-radius: 0;
+            background: var(--ytlc-chip);
+            color: var(--ytlc-fg) !important;
+            font-size: 12px !important;
+            line-height: 12px;
+            box-shadow: inset -2px -3px 0 0 var(--ytlc-shade), 0 0 0 2px var(--ytlc-frame);
+        }
+        .ytlc-pixel :is(.ytlc-chip, .ytlc-bar-btn):hover { background: var(--ytlc-hl); }
+        .ytlc-pixel .ytlc-chip[aria-pressed="true"], .ytlc-pixel .ytlc-bar-btn.ytlc-primary {
+            background: var(--ytlc-fg);
+            color: var(--ytlc-bg) !important;
+        }
+        .ytlc-pixel .ytlc-vtitle, .ytlc-pixel .ytlc-group-head b { font-weight: 400; }
+        .ytlc-pixel .ytlc-current > .ytlc-video-row, .ytlc-pixel .ytlc-video-row:hover { background: var(--ytlc-hl); }
+        .ytlc-pixel :is(.ytlc-kind, .ytlc-badge) {
+            display: inline-block;
+            padding: 2px 3px;
+            background: var(--ytlc-tq);
+            color: var(--ytlc-tag-fg);
+            font-size: 12px;
+            line-height: 12px;
+        }
+        .ytlc-pixel :is(.ytlc-kind, .ytlc-badge)[data-kind="mark"] { background: var(--ytlc-tm); }
+        .ytlc-pixel :is(.ytlc-kind, .ytlc-badge)[data-kind="note"] { background: var(--ytlc-tn); color: var(--ytlc-tn-fg); }
+        .ytlc-pixel .ytlc-badges { gap: 4px; }
     `);
 
     function h(tag, props = {}, ...children) {
@@ -765,9 +1007,13 @@
         return location.pathname === '/watch' ? new URLSearchParams(location.search).get('v') : null;
     }
 
-    function videoUrl(t) {
-        const base = `https://www.youtube.com/watch?v=${videoId}`;
+    function urlFor(id, t) {
+        const base = `https://www.youtube.com/watch?v=${id}`;
         return t === undefined ? base : `${base}&t=${Math.floor(t)}s`;
+    }
+
+    function videoUrl(t) {
+        return urlFor(videoId, t);
     }
 
     function pageInfo() {
@@ -788,6 +1034,9 @@
         const info = pageInfo();
         record.title = info.title || record.title;
         record.channel = info.channel || record.channel;
+        // 记下所属播放列表，留给以后按课程分组。
+        const playlist = new URLSearchParams(location.search).get('list');
+        if (playlist && new URLSearchParams(location.search).get('v') === record.id) record.playlistId = playlist;
         if (record.notes.length) GM_setValue(RECORD_PREFIX + record.id, record);
         else GM_deleteValue(RECORD_PREFIX + record.id);
     }
@@ -965,22 +1214,51 @@
             '## 留言',
             '',
         ];
-        for (const note of record.notes) {
-            const [first, ...rest] = note.text.split('\n');
-            const label = KIND_LABEL[note.kind] || '想法';
-            const head = `- [${formatTime(note.t)}](${videoUrl(note.t)}) **${label}**`;
-            out.push(first === label ? head : `${head} ${first}`);
-            for (const line of rest) out.push(`  ${line}`);
-            if (note.context?.length) out.push(`  - 字幕：${note.context.join(' / ')}`);
-            for (const reply of note.replies || []) {
-                if (reply.role === 'teacher') out.push(`  - AI 助教：${reply.text.replace(/\n/g, '\n    ')}`);
-            }
-        }
+        for (const note of record.notes) out.push(...noteLines(record, note));
         return out.join('\n') + '\n';
+    }
+
+    const CONTEXT_EXPLAINED = '> 时间戳是我产生疑问或想法的时刻；「字幕」是该时刻前后的课程字幕，用于还原上下文。';
+    const exportedAt = () => new Date().toLocaleString('zh-CN', { hour12: false });
+
+    function noteLines(rec, note) {
+        const out = [];
+        const [first, ...rest] = note.text.split('\n');
+        const label = KIND_LABEL[note.kind] || '想法';
+        const head = `- [${formatTime(note.t)}](${urlFor(rec.id, note.t)}) **${label}**`;
+        out.push(first === label ? head : `${head} ${first}`);
+        for (const line of rest) out.push(`  ${line}`);
+        if (note.context?.length) out.push(`  - 字幕：${note.context.join(' / ')}`);
+        for (const reply of note.replies || []) {
+            if (reply.role === 'teacher') out.push(`  - AI 助教：${reply.text.replace(/\n/g, '\n    ')}`);
+        }
+        return out;
+    }
+
+    // 笔记库：多个视频合并成一份，或把某一类留言跨视频汇总。
+    function collectionMarkdown(heading, sections) {
+        const total = sections.reduce((sum, section) => sum + section.notes.length, 0);
+        const out = [`# ${heading}`, '', `- 导出：${exportedAt()}，共 ${total} 条，来自 ${sections.length} 个视频`, '', CONTEXT_EXPLAINED, ''];
+        for (const { rec, notes } of sections) {
+            out.push(`## ${rec.title || rec.id}`, '', `- 视频：${urlFor(rec.id)}`);
+            if (rec.channel) out.push(`- 频道：${rec.channel}`);
+            out.push('');
+            for (const note of notes) out.push(...noteLines(rec, note));
+            out.push('');
+        }
+        return out.join('\n');
     }
 
     // ---- 界面 ----
     const count = h('span', { className: 'ytlc-count' });
+    const titleLabel = h('span', {}, '课堂留言');
+    const titleCaret = h('span', { className: 'ytlc-caret', 'aria-hidden': 'true' }, '▾');
+    const titleButton = h('button', {
+        type: 'button',
+        className: 'ytlc-title-btn',
+        'aria-label': '打开笔记库',
+        title: '打开笔记库',
+    }, titleLabel, count, titleCaret);
     const copyButton = h('button', { type: 'button', className: 'ytlc-tool', title: '复制为 Markdown，交给 Agent 总结' }, '复制');
     const relatedButton = h('button', { type: 'button', className: 'ytlc-tool', title: '显示或隐藏推荐视频' }, '推荐');
     const clearButton = h('button', { type: 'button', className: 'ytlc-tool', title: '清空本视频的全部留言' }, '清空');
@@ -1021,11 +1299,36 @@
     h('span', { className: 'ytlc-skin-check', 'aria-hidden': 'true' }, '✓')));
     const skinMenu = h('div', { className: 'ytlc-skin-menu', role: 'menu', 'aria-label': '皮肤', hidden: true },
         h('div', { className: 'ytlc-skin-heading', 'aria-hidden': 'true' }, '选择皮肤'), ...skinItems);
+    // ---- 笔记库界面 ----
+    const searchInput = h('input', {
+        type: 'search',
+        className: 'ytlc-search',
+        placeholder: '搜索标题或留言…',
+        'aria-label': '搜索笔记',
+    });
+    const chips = ['all', 'question', 'note', 'mark'].map(kind => h('button', {
+        type: 'button',
+        className: 'ytlc-chip',
+        'data-kind': kind,
+        'aria-pressed': String(kind === 'all'),
+    }));
+    const libList = h('ol', { className: 'ytlc-lib-list' });
+    const libBar = h('div', { className: 'ytlc-lib-bar' });
+    const fileInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
+    const library = h('div', { className: 'ytlc-library' },
+        h('div', { className: 'ytlc-lib-tools' },
+            searchInput,
+            h('div', { className: 'ytlc-chips' }, ...chips, h('span', { className: 'ytlc-sort-label' }, '按最近记录'))),
+        libList,
+        libBar,
+        fileInput);
+
     const panel = h('section', { className: 'ytlc-panel', 'aria-label': '听课留言板' },
         h('div', { className: 'ytlc-head' },
-            h('div', { className: 'ytlc-title' }, '课堂留言', count),
+            h('div', { className: 'ytlc-title' }, titleButton),
             copyButton, relatedButton, clearButton, lamp),
         list,
+        library,
         h('div', { className: 'ytlc-composer' },
             h('div', { className: 'ytlc-quick' }, quickQuestion, quickIdea, quickMark, anchorButton),
             input,
@@ -1035,7 +1338,7 @@
                 h('div', { className: 'ytlc-skin' }, skinMenu, skinToggle))));
 
     function render(flashId) {
-        count.textContent = record?.notes.length ? String(record.notes.length) : '';
+        if (view === 'notes') count.textContent = record?.notes.length ? String(record.notes.length) : '';
         relatedButton.setAttribute('aria-pressed', String(settings.showRelated));
         if (!record?.notes.length) {
             list.replaceChildren(h('li', { className: 'ytlc-empty' },
@@ -1315,6 +1618,288 @@
         pullOnce();
     });
 
+    // ---- 笔记库：所有视频的留言，按最近记录排序 ----
+    let view = 'notes';
+    let libKind = 'all';
+    let libStatus = '';
+    let libStatusTimer = 0;
+    const libSelected = new Set();
+    const libExpanded = new Set();
+
+    function allRecords() {
+        return GM_listValues()
+            .filter(key => key.startsWith(RECORD_PREFIX))
+            .map(key => {
+                const id = key.slice(RECORD_PREFIX.length);
+                return id === record?.id ? record : loadRecord(id);
+            })
+            .filter(rec => rec.notes?.length);
+    }
+
+    // 最近记录时间：最后一条留言的创建或编辑时间。
+    function lastActive(rec) {
+        return rec.notes.reduce((latest, note) => {
+            const time = [note.createdAt, note.editedAt].filter(Boolean).sort().at(-1) || '';
+            return time > latest ? time : latest;
+        }, '');
+    }
+
+    function formatDay(iso) {
+        if (!iso) return '';
+        const date = new Date(iso);
+        const now = new Date();
+        const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const diff = Math.round((day(now) - day(date)) / 86400000);
+        if (diff === 0) return `今天 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        if (diff === 1) return '昨天';
+        const md = `${date.getMonth() + 1}/${date.getDate()}`;
+        return date.getFullYear() === now.getFullYear() ? md : `${date.getFullYear()}/${md}`;
+    }
+
+    function kindMark(kind, className, ...extra) {
+        return h('span', { className, 'data-kind': kind },
+            h('span', { className: 'ytlc-tag-icon' }, KIND_ICON[kind]),
+            h('span', { className: 'ytlc-tag-label' }, KIND_LABEL[kind]),
+            ...extra);
+    }
+
+    function libNoteItem(rec, note) {
+        return h('li', { className: 'ytlc-lib-note' },
+            h('button', {
+                type: 'button',
+                className: 'ytlc-time',
+                title: '打开视频并跳到这里',
+                onclick: () => openAt(rec.id, note.t),
+            }, formatTime(note.t)),
+            kindMark(note.kind, 'ytlc-kind'),
+            h('span', { className: 'ytlc-lib-text' }, note.text === KIND_LABEL[note.kind] ? '' : note.text));
+    }
+
+    function openAt(id, t) {
+        if (id === videoId) {
+            seek(t);
+            setView('notes');
+        } else {
+            location.assign(urlFor(id, t));
+        }
+    }
+
+    function setLibStatus(text) {
+        libStatus = text;
+        clearTimeout(libStatusTimer);
+        libStatusTimer = setTimeout(() => {
+            libStatus = '';
+            if (view === 'library') renderLibrary();
+        }, 2500);
+        renderLibrary();
+    }
+
+    function renderLibrary() {
+        const query = searchInput.value.trim().toLowerCase();
+        const hit = text => !query || (text || '').toLowerCase().includes(query);
+        const noteHit = (rec, note) => hit(note.text) || hit(rec.title) || hit(rec.channel);
+        const records = allRecords().sort((a, b) => lastActive(b).localeCompare(lastActive(a)));
+        const ids = new Set(records.map(rec => rec.id));
+        for (const id of [...libSelected]) if (!ids.has(id)) libSelected.delete(id);
+
+        const counts = { question: 0, note: 0, mark: 0 };
+        for (const rec of records) for (const note of rec.notes) if (noteHit(rec, note)) counts[note.kind] = (counts[note.kind] || 0) + 1;
+        for (const chip of chips) {
+            const kind = chip.dataset.kind;
+            chip.setAttribute('aria-pressed', String(kind === libKind));
+            chip.replaceChildren(...(kind === 'all' ? ['全部'] : [
+                h('span', { className: 'ytlc-tag-icon' }, `${KIND_ICON[kind]} `), KIND_LABEL[kind], h('i', {}, String(counts[kind])),
+            ]));
+            if (kind !== 'all') chip.setAttribute('aria-label', `${KIND_LABEL[kind]} ${counts[kind]}`);
+        }
+
+        let items;
+        let sections = [];
+        if (libKind === 'all') {
+            const visible = records.filter(rec => hit(rec.title) || hit(rec.channel) || rec.notes.some(note => hit(note.text)));
+            count.textContent = `${visible.length} 个视频`;
+            items = visible.map(rec => {
+                const expanded = libExpanded.has(rec.id);
+                const perKind = { question: 0, note: 0, mark: 0 };
+                for (const note of rec.notes) perKind[note.kind] = (perKind[note.kind] || 0) + 1;
+                const check = h('input', {
+                    type: 'checkbox',
+                    className: 'ytlc-check',
+                    checked: libSelected.has(rec.id),
+                    'aria-label': `选择「${rec.title || rec.id}」`,
+                });
+                check.addEventListener('change', () => {
+                    if (check.checked) libSelected.add(rec.id);
+                    else libSelected.delete(rec.id);
+                    renderLibrary();
+                });
+                const meta = h('span', { className: 'ytlc-vmeta' });
+                if (rec.channel) meta.append(h('span', {}, rec.channel));
+                meta.append(h('span', {}, formatDay(lastActive(rec))));
+                if (rec.id === videoId) meta.append(h('span', { className: 'ytlc-now' }, '正在看'));
+                const info = h('button', {
+                    type: 'button',
+                    className: 'ytlc-vinfo',
+                    'aria-expanded': String(expanded),
+                    onclick: () => {
+                        if (expanded) libExpanded.delete(rec.id);
+                        else libExpanded.add(rec.id);
+                        renderLibrary();
+                    },
+                },
+                h('span', { className: 'ytlc-vtitle' }, rec.title || rec.id),
+                meta,
+                h('span', { className: 'ytlc-badges' },
+                    ...['question', 'note', 'mark'].filter(kind => perKind[kind])
+                        .map(kind => kindMark(kind, 'ytlc-badge', ` ${perKind[kind]}`))));
+                const item = h('li', { className: rec.id === videoId ? 'ytlc-video ytlc-current' : 'ytlc-video', 'data-id': rec.id },
+                    h('div', { className: 'ytlc-video-row' },
+                        check, info, h('span', { className: 'ytlc-vcaret', 'aria-hidden': 'true' }, expanded ? '▾' : '▸')));
+                if (expanded) item.append(h('ol', { className: 'ytlc-lib-notes' }, ...rec.notes.map(note => libNoteItem(rec, note))));
+                return item;
+            });
+        } else {
+            sections = records
+                .map(rec => ({ rec, notes: rec.notes.filter(note => note.kind === libKind && noteHit(rec, note)) }))
+                .filter(section => section.notes.length);
+            count.textContent = `${counts[libKind]} 条${KIND_LABEL[libKind]}`;
+            items = sections.map(({ rec, notes }) => h('li', { className: 'ytlc-group', 'data-id': rec.id },
+                h('div', { className: 'ytlc-group-head' },
+                    h('b', { title: rec.title || rec.id }, rec.title || rec.id),
+                    h('span', {}, formatDay(lastActive(rec)))),
+                h('ol', { className: 'ytlc-lib-notes' }, ...notes.map(note => libNoteItem(rec, note)))));
+        }
+        const emptyText = records.length ? '没有符合条件的笔记。' : '还没有任何笔记。在视频里发出第一条留言后，这里会列出所有记过笔记的视频。';
+        libList.replaceChildren(...(items.length ? items : [h('li', { className: 'ytlc-lib-empty' }, emptyText)]));
+
+        // 底栏：左边是针对当前视图的操作，右边是备份。
+        const left = [];
+        if (libStatus) {
+            left.push(h('span', { className: 'ytlc-lib-status', role: 'status' }, libStatus));
+        } else if (libKind === 'all') {
+            if (libSelected.size) {
+                left.push(h('span', {}, `已选 ${libSelected.size} 个`),
+                    h('button', { type: 'button', className: 'ytlc-bar-btn ytlc-primary', onclick: () => copySelected(records) }, '合并复制'),
+                    h('button', { type: 'button', className: 'ytlc-bar-btn', onclick: deleteSelected }, '删除'));
+            } else {
+                left.push(h('span', { className: 'ytlc-lib-status' }, '勾选视频可合并复制或删除'));
+            }
+        } else {
+            const total = sections.reduce((sum, section) => sum + section.notes.length, 0);
+            const copyKind = h('button', {
+                type: 'button',
+                className: 'ytlc-bar-btn ytlc-primary',
+                onclick: () => {
+                    GM_setClipboard(collectionMarkdown(`所有「${KIND_LABEL[libKind]}」`, sections), 'text');
+                    setLibStatus(`已复制 ${total} 条${KIND_LABEL[libKind]}`);
+                },
+            }, `复制这 ${total} 条${KIND_LABEL[libKind]}`);
+            copyKind.disabled = !total;
+            left.push(copyKind);
+        }
+        libBar.replaceChildren(...left, h('span', { className: 'ytlc-bar-links' },
+            h('button', { type: 'button', className: 'ytlc-link', title: '把所有笔记导出为 JSON 备份文件', onclick: exportAll }, '导出全部'),
+            '·',
+            h('button', { type: 'button', className: 'ytlc-link', title: '从 JSON 备份文件导入，已有的留言不会重复', onclick: () => fileInput.click() }, '导入')));
+    }
+
+    function copySelected(records) {
+        const sections = records.filter(rec => libSelected.has(rec.id)).map(rec => ({ rec, notes: rec.notes }));
+        GM_setClipboard(collectionMarkdown(`听课留言合集：${sections.length} 个视频`, sections), 'text');
+        setLibStatus(`已复制 ${sections.length} 个视频的留言`);
+    }
+
+    function deleteSelected() {
+        const size = libSelected.size;
+        if (!size || !confirm(`删除选中的 ${size} 个视频的全部留言？此操作无法撤销。`)) return;
+        for (const id of libSelected) {
+            GM_deleteValue(RECORD_PREFIX + id);
+            libExpanded.delete(id);
+            if (id === record?.id) {
+                record.notes = [];
+                releaseFilling();
+                render();
+            }
+        }
+        libSelected.clear();
+        setLibStatus(`已删除 ${size} 个视频的留言`);
+    }
+
+    function exportAll() {
+        const records = allRecords();
+        const data = { format: 'youtube-lecture-chat', version: VERSION, exportedAt: new Date().toISOString(), records };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const date = new Date();
+        const stamp = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+        const link = h('a', { href: URL.createObjectURL(blob), download: `youtube-lecture-notes-${stamp}.json` });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+        setLibStatus(`已导出 ${records.length} 个视频`);
+    }
+
+    // 导入时按留言 id 合并：已有的留言保留不动，只补上没有的。
+    fileInput.addEventListener('change', async () => {
+        const file = fileInput.files[0];
+        fileInput.value = '';
+        if (!file) return;
+        try {
+            const data = JSON.parse(await file.text());
+            if (data?.format !== 'youtube-lecture-chat' || !Array.isArray(data.records)) throw new Error('不是留言板导出的备份文件');
+            let videos = 0;
+            let added = 0;
+            for (const incoming of data.records) {
+                if (typeof incoming?.id !== 'string' || !Array.isArray(incoming.notes)) continue;
+                const target = incoming.id === record?.id ? record : loadRecord(incoming.id);
+                const known = new Set(target.notes.map(note => note.id));
+                let fresh = 0;
+                for (const note of incoming.notes) {
+                    if (!note?.id || known.has(note.id) || typeof note.text !== 'string' || !Number.isFinite(note.t)) continue;
+                    target.notes.push({ context: [], replies: [], ...note, kind: KIND_LABEL[note.kind] ? note.kind : 'note' });
+                    known.add(note.id);
+                    fresh++;
+                }
+                if (!fresh) continue;
+                target.notes.sort((a, b) => a.t - b.t);
+                target.title ||= incoming.title || '';
+                target.channel ||= incoming.channel || '';
+                if (!target.playlistId && incoming.playlistId) target.playlistId = incoming.playlistId;
+                GM_setValue(RECORD_PREFIX + target.id, target);
+                videos++;
+                added += fresh;
+            }
+            if (record) render();
+            setLibStatus(added ? `已导入 ${videos} 个视频，新增 ${added} 条留言` : '没有需要导入的新留言');
+        } catch (error) {
+            setLibStatus(`导入失败：${error.message}`);
+        }
+    });
+
+    function setView(next) {
+        if (view === next) return;
+        if (editingId) finishEdit(true, false);
+        closeSkinMenu(false);
+        view = next;
+        panel.dataset.view = next;
+        const toLibrary = next === 'library';
+        titleLabel.textContent = toLibrary ? '笔记库' : '课堂留言';
+        titleCaret.textContent = toLibrary ? '▴' : '▾';
+        titleButton.setAttribute('aria-label', toLibrary ? '返回本视频留言' : '打开笔记库');
+        titleButton.title = toLibrary ? '返回本视频留言' : '打开笔记库';
+        if (toLibrary) renderLibrary();
+        else render();
+    }
+
+    titleButton.addEventListener('click', () => setView(view === 'library' ? 'notes' : 'library'));
+    searchInput.addEventListener('input', renderLibrary);
+    for (const chip of chips) {
+        chip.addEventListener('click', () => {
+            libKind = chip.dataset.kind;
+            renderLibrary();
+        });
+    }
+
     // ---- 皮肤选单：右下角向上弹出 ----
     function openSkinMenu() {
         loadPixelFont();
@@ -1368,6 +1953,7 @@
         if (!panel.isConnected || event.target.closest?.('input, textarea, [contenteditable=""], [contenteditable="true"]')) return;
         event.preventDefault();
         event.stopPropagation();
+        setView('notes');
         input.focus();
     }, true);
     // timeupdate 不冒泡，但在捕获阶段能收到，这样换了 video 元素也不用重新绑定。
@@ -1394,6 +1980,7 @@
             input.value = '';
             setAnchor(null);
             render();
+            if (view === 'library') renderLibrary();
         }
         document.documentElement.classList.toggle('ytlc-hide-related', Boolean(id) && !settings.showRelated);
         relatedButton.setAttribute('aria-pressed', String(settings.showRelated));

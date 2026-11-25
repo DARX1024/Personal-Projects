@@ -40,7 +40,8 @@
 ### userscripts/youtube-lecture-chat
 
 - Tampermonkey 脚本，主文件 `youtube-lecture-chat.user.js`，只在 YouTube 观看页显示面板。
-- 留言按视频分别存在 `GM_setValue('video:<id>')`，设置存在 `settings`；改存储结构时保持对旧数据的兼容。
+- 留言按视频分别存在 `GM_setValue('video:<id>')`（含 `title`、`channel`、`playlistId`、`notes`），设置存在 `settings`；改存储结构时保持对旧数据的兼容。笔记库用 `GM_listValues` 列出所有 `video:` 键。
+- 备份文件格式为 `{ format: 'youtube-lecture-chat', version, exportedAt, records }`，导入时按留言 `id` 合并；改字段时同时兼容旧备份。
 - AI 助教接口是脚本内的 `teacher` 对象，API key 只能从本机配置读取，不能写进仓库。
 - 皮肤在 `SKINS` 中定义，像素吊坠在 `SPRITES` 中逐像素描述；配色按 `.ytlc-panel[data-skin][data-theme]` 写 CSS 变量，每款皮肤都要有深浅两套。
 - 像素字体通过 `@resource pixelFont` 引入（Fusion Pixel，OFL-1.1），升级字体时同步改 `@resource` 与 `PIXEL_FONT_URL`。
