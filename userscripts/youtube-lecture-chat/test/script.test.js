@@ -95,7 +95,7 @@ test('时间戳锚定在开始输入时，输入法组字时回车不发送，Sh
     assert.ok(await page.locator('.ytlc-anchor').isHidden());
     const note = page.locator('.ytlc-note');
     assert.equal(await note.locator('.ytlc-time').innerText(), '1:40');
-    assert.equal(await note.locator('.ytlc-text').innerText(), '为什么\n有限？');
+    assert.equal(await note.locator('.ytlc-words').innerText(), '为什么\n有限？');
     assert.equal(await note.getAttribute('data-kind'), 'question');
     // 只有空格时不发送；清空后锚点解除，下一条使用新的时间。
     await input.pressSequentially('  ');
@@ -154,7 +154,7 @@ test('站内切换视频时留言各自独立，离开观看页移除留言板�
     await input.fill('第二讲');
     await input.press('Enter');
     await navigate('/watch?v=abc');
-    assert.deepEqual(await page.locator('.ytlc-text').allInnerTexts(), ['第一讲']);
+    assert.deepEqual(await page.locator('.ytlc-words').allInnerTexts(), ['第一讲']);
     await navigate('/');
     assert.equal(await page.locator('.ytlc-panel').count(), 0);
     assert.ok(await page.evaluate(() => !document.documentElement.classList.contains('ytlc-hide-related')));
@@ -311,7 +311,7 @@ test('像素皮肤用标签显示疑问和重点，「重点」快捷标记不�
     await page.getByRole('button', { name: '更换皮肤' }).click();
     await page.getByRole('menuitemradio', { name: /月夜自习/ }).click();
     assert.ok(await words.isHidden());
-    assert.equal(await page.locator('.ytlc-note .ytlc-text').evaluate(el => getComputedStyle(el, '::before').content), '"重点"');
+    assert.equal(await page.locator('.ytlc-note .ytlc-tag').innerText(), '重点');
 });
 
 test('只看结尾问号：结尾有问号是疑问，其余（包括问号开头）都是想法', async t => {
@@ -372,7 +372,7 @@ test('「💡 想法」先在当前时间占位，接着输入的文字补进这
     await page.getByRole('button', { name: '更换皮肤' }).click();
     await page.getByRole('menuitemradio', { name: /RPG/ }).click();
     assert.ok(await page.locator('.ytlc-words', { hasText: /^想法$/ }).isHidden());
-    assert.equal(await notes.nth(1).locator('.ytlc-text').evaluate(el => getComputedStyle(el, '::before').content), '"想法"');
+    assert.equal(await notes.nth(1).locator('.ytlc-tag').innerText(), '想法');
 });
 
 test('台灯吊坠浅色时点亮、深色时熄灭，血瓶和星星深色时发光', async t => {
@@ -390,4 +390,44 @@ test('台灯吊坠浅色时点亮、深色时熄灭，血瓶和星星深色时�
         await page.locator('.ytlc-lamp').click();
         assert.equal(await lit(), inDark, `${name} 深色`);
     }
+});
+
+test('点击留言前的类别标记按 疑问 → 想法 → 重点 循环切换，导出和刷新后都生效', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    const input = page.getByRole('textbox', { name: '发送留言' });
+    await input.fill('这里为什么要除以根号 d');
+    await input.press('Enter');
+    const note = page.locator('.ytlc-note');
+    assert.equal(await note.getAttribute('data-kind'), 'note');
+    // 忘了打问号：点「想法」标记两下改成疑问。
+    await page.getByRole('button', { name: '类别：想法，点击改为重点' }).click();
+    assert.equal(await note.getAttribute('data-kind'), 'mark');
+    await page.getByRole('button', { name: '类别：重点，点击改为疑问' }).click();
+    assert.equal(await note.getAttribute('data-kind'), 'question');
+    assert.equal(await note.locator('.ytlc-words').innerText(), '这里为什么要除以根号 d');
+    assert.equal(await note.locator('.ytlc-tag').innerText(), '❓');
+    // 键盘操作后焦点仍在标记上，可以连续切换。
+    assert.ok(await note.locator('.ytlc-tag').evaluate(el => el === document.activeElement));
+    await page.getByRole('button', { name: '复制' }).click();
+    assert.match(await page.evaluate(() => window.clipboard), /\*\*疑问\*\* 这里为什么要除以根号 d/);
+    const reloaded = await openPage(context, '/watch?v=abc');
+    assert.equal(await reloaded.locator('.ytlc-note').getAttribute('data-kind'), 'question');
+});
+
+test('只有标签的占位留言切换类别时文字跟着变，像素皮肤里标记显示为文字', async t => {
+    const context = await newContext(t);
+    const page = await openPage(context, '/watch?v=abc');
+    await page.getByRole('button', { name: '💡 想法' }).click();
+    await page.keyboard.press('Escape');
+    const note = page.locator('.ytlc-note');
+    await note.locator('.ytlc-tag').click();
+    assert.equal(await note.getAttribute('data-kind'), 'mark');
+    assert.equal(await note.locator('.ytlc-words').innerText(), '重点');
+    await page.getByRole('button', { name: '更换皮肤' }).click();
+    await page.getByRole('menuitemradio', { name: /方格笔记本/ }).click();
+    assert.equal(await note.locator('.ytlc-tag').innerText(), '重点');
+    assert.ok(await note.locator('.ytlc-words').isHidden());
+    await note.locator('.ytlc-tag').click();
+    assert.equal(await note.locator('.ytlc-tag').innerText(), '疑问');
 });

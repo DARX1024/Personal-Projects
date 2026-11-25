@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube 听课留言板
 // @namespace    https://github.com/DARX1024/Personal-Projects
-// @version      1.4.1
+// @version      1.5.0
 // @description  把观看页右侧的推荐视频换成一个只属于自己的「直播间」：随手发疑问和想法，自动记下视频时间戳和当时的字幕，课后一键复制给 Agent 总结。
 // @author       DARX1024
 // @match        https://www.youtube.com/*
@@ -21,7 +21,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '1.4.1';
+    const VERSION = '1.5.0';
     const RECORD_PREFIX = 'video:';
     const SETTINGS_KEY = 'settings';
     // 留言附带的字幕范围：锚定时刻之前 20 秒到之后 5 秒。
@@ -29,6 +29,9 @@
     const CONTEXT_AFTER = 5;
     const CAPTION_LOG_LIMIT = 400;
     const KIND_LABEL = { question: '疑问', mark: '重点', note: '想法' };
+    const KIND_ICON = { question: '❓', mark: '⭐', note: '💡' };
+    // 点击留言前的类别标记时按这个顺序切换。
+    const KIND_NEXT = { question: 'note', note: 'mark', mark: 'question' };
     // 拉灯开关：绳子静止长度、最多能拉下的长度、松手时超过多少算拉到底。
     const CORD_REST = 18;
     const CORD_MAX_PULL = 14;
@@ -258,9 +261,22 @@
             white-space: pre-wrap;
             overflow-wrap: anywhere;
         }
-        .ytlc-note[data-kind="question"] .ytlc-text::before { content: "❓ "; }
-        .ytlc-note[data-kind="mark"] .ytlc-text::before { content: "⭐ "; }
-        .ytlc-note[data-kind="note"] .ytlc-text::before { content: "💡 "; }
+        /* 类别标记是按钮，点击切换疑问 / 想法 / 重点；默认皮肤显示图标，像素皮肤显示文字色块。 */
+        .ytlc-tag {
+            margin: 0 4px 0 -2px;
+            padding: 0 2px;
+            border: 0;
+            border-radius: 4px;
+            background: none;
+            font: inherit;
+            line-height: inherit;
+            vertical-align: baseline;
+        }
+        .ytlc-tag:hover, .ytlc-tag:focus-visible {
+            outline: none;
+            background: var(--ytlc-line);
+        }
+        .ytlc-tag-label { display: none; }
         .ytlc-context {
             margin-top: 2px;
             color: var(--ytlc-muted);
@@ -483,21 +499,21 @@
         .ytlc-pixel .ytlc-tool[aria-pressed="true"] { background: var(--ytlc-fg); color: var(--ytlc-bg) !important; }
         .ytlc-pixel .ytlc-note:hover, .ytlc-pixel .ytlc-note.ytlc-flash { background: var(--ytlc-hl); }
         .ytlc-pixel .ytlc-time { font-size: 12px !important; }
-        .ytlc-pixel .ytlc-note[data-kind] .ytlc-text::before {
+        .ytlc-pixel .ytlc-tag {
             display: inline-block;
-            margin-right: 5px;
+            margin: 0 5px 0 0;
             padding: 2px 3px;
-            color: var(--ytlc-tag-fg);
-            font-size: 12px;
+            border-radius: 0;
+            background: var(--ytlc-tq);
+            color: var(--ytlc-tag-fg) !important;
+            font-size: 12px !important;
             line-height: 12px;
         }
-        .ytlc-pixel .ytlc-note[data-kind="question"] .ytlc-text::before { content: "疑问"; background: var(--ytlc-tq); }
-        .ytlc-pixel .ytlc-note[data-kind="mark"] .ytlc-text::before { content: "重点"; background: var(--ytlc-tm); }
-        .ytlc-pixel .ytlc-note[data-kind="note"] .ytlc-text::before {
-            content: "想法";
-            background: var(--ytlc-tn);
-            color: var(--ytlc-tn-fg);
-        }
+        .ytlc-pixel .ytlc-tag:is(:hover, :focus-visible) { box-shadow: 0 0 0 2px var(--ytlc-frame); }
+        .ytlc-pixel .ytlc-note[data-kind="mark"] .ytlc-tag { background: var(--ytlc-tm); }
+        .ytlc-pixel .ytlc-note[data-kind="note"] .ytlc-tag { background: var(--ytlc-tn); color: var(--ytlc-tn-fg) !important; }
+        .ytlc-pixel .ytlc-tag-icon { display: none; }
+        .ytlc-pixel .ytlc-tag-label { display: inline; }
         .ytlc-pixel .ytlc-label-only .ytlc-words { display: none; }
         .ytlc-pixel .ytlc-context { font-size: 12px; line-height: 18px; }
         .ytlc-pixel .ytlc-reply { border-left-width: 4px; border-radius: 0; background: var(--ytlc-hl); }
@@ -780,6 +796,19 @@
         if (filling && !record?.notes.includes(filling)) setAnchor(input.value.trim() ? anchor : null);
     }
 
+    // 切换类别；只有标签、没写内容的留言（如占位的「想法」）文字跟着改成新类别名。
+    function cycleKind(id) {
+        const note = record?.notes.find(item => item.id === id);
+        if (!note) return;
+        const next = KIND_NEXT[note.kind] || 'note';
+        if (note.text === KIND_LABEL[note.kind]) note.text = KIND_LABEL[next];
+        note.kind = next;
+        saveRecord();
+        render(note.id);
+        list.querySelector(`[data-id="${id}"] .ytlc-tag`)?.focus({ preventScroll: true });
+        if (!note.replies?.length && !pending.has(note.id)) askTeacher(note);
+    }
+
     function deleteNote(id) {
         record.notes = record.notes.filter(note => note.id !== id);
         releaseFilling();
@@ -883,7 +912,17 @@
         let flashed = null;
         list.replaceChildren(...record.notes.map(note => {
             const body = h('div', { className: 'ytlc-body' },
-                h('div', { className: 'ytlc-text' }, h('span', { className: 'ytlc-words' }, note.text)));
+                h('div', { className: 'ytlc-text' },
+                    h('button', {
+                        type: 'button',
+                        className: 'ytlc-tag',
+                        'aria-label': `类别：${KIND_LABEL[note.kind]}，点击改为${KIND_LABEL[KIND_NEXT[note.kind]]}`,
+                        title: `点击改为「${KIND_LABEL[KIND_NEXT[note.kind]]}」`,
+                        onclick: () => cycleKind(note.id),
+                    },
+                    h('span', { className: 'ytlc-tag-icon' }, KIND_ICON[note.kind]),
+                    h('span', { className: 'ytlc-tag-label' }, KIND_LABEL[note.kind])),
+                    h('span', { className: 'ytlc-words' }, note.text)));
             if (note.context?.length) {
                 body.append(h('div', { className: 'ytlc-context', title: note.context.join('\n') },
                     '字幕：' + note.context.at(-1)));
@@ -891,7 +930,11 @@
             for (const reply of note.replies || []) body.append(h('div', { className: 'ytlc-reply' }, reply.text));
             if (pending.has(note.id)) body.append(h('div', { className: 'ytlc-reply' }, '助教思考中…'));
             const labelOnly = note.text === KIND_LABEL[note.kind];
-            const item = h('li', { className: labelOnly ? 'ytlc-note ytlc-label-only' : 'ytlc-note', 'data-kind': note.kind },
+            const item = h('li', {
+                className: labelOnly ? 'ytlc-note ytlc-label-only' : 'ytlc-note',
+                'data-kind': note.kind,
+                'data-id': note.id,
+            },
                 h('button', {
                     type: 'button',
                     className: 'ytlc-time',
